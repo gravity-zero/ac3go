@@ -1,0 +1,112 @@
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  schedule:
+    - cron: "40 4 * * *"
+
+jobs:
+  test:
+    if: github.event_name != 'schedule'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.x"
+      - name: Test
+        env:
+          CGO_ENABLED: "0"
+        run: go test ./... -count=1
+      - name: Vet
+        env:
+          CGO_ENABLED: "0"
+        run: go vet ./...
+
+  race:
+    # The one place the race detector runs: it needs cgo, which the
+    # development machine does not have.
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.x"
+      - name: Test with the race detector
+        run: go test ./... -count=1 -race
+
+  cross:
+    # The build targets a release has to hold: wasm is what the player runs,
+    # and the 32-bit build is what gives the reader's size guards a platform
+    # where they can fire.
+    if: github.event_name != 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.x"
+      - name: Format
+        run: test -z "$(gofmt -l .)"
+      - name: Build for wasm
+        env:
+          CGO_ENABLED: "0"
+          GOOS: js
+          GOARCH: wasm
+        run: go build ./...
+      - name: Build, vet and test for 386
+        # A 64-bit build cannot reach the bit reader's size guard; the 32-bit
+        # tests are the ones that actually execute it.
+        env:
+          CGO_ENABLED: "0"
+          GOOS: linux
+          GOARCH: "386"
+        run: |
+          go build ./...
+          go vet ./...
+          go test ./... -count=1
+
+  fuzz:
+    # Nightly only: each target gets a bounded slice, and the corpus grows
+    # across nights through the cache, which is how a crasher that needs a
+    # mature corpus eventually surfaces.
+    if: github.event_name == 'schedule'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.26.x"
+      - uses: actions/cache@v4
+        with:
+          path: ~/.cache/go-build/fuzz
+          key: fuzz-corpus-${{ github.run_id }}
+          restore-keys: fuzz-corpus-
+      - name: Fuzz each target
+        env:
+          CGO_ENABLED: "0"
+        run: |
+          set -e
+          for t in FuzzReader; do
+            echo "::group::bitstream $t"
+            go test -run '^$' -fuzz "^${t}\$" -fuzztime=60s ./bitstream
+            echo "::endgroup::"
+          done
+          for t in FuzzParseSyncInfo FuzzParseHeader FuzzCheckCRC FuzzFrameReader FuzzDecodeFrame; do
+            echo "::group::ac3 $t"
+            go test -run '^$' -fuzz "^${t}\$" -fuzztime=60s ./ac3
+            echo "::endgroup::"
+          done
+      - name: Keep any crasher
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuzz-crashers
+          path: "**/testdata/fuzz/**"

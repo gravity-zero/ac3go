@@ -1,0 +1,17 @@
+# Build artifacts
+/ac3go
+/ac3go-wasm
+*.exe
+*.test
+
+# Coverage
+*.out
+
+# Local corpus and oracle scratch - real media, never committed.
+# Synthetic anonymous fixtures live under testdata/ and ARE committed.
+/testdata/local/
+.claude/worktrees/
+
+# WebAssembly build artifacts (produced by `make wasm`)
+/web/ac3go.wasm
+/web/wasm_exec.js

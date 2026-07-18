@@ -1,0 +1,118 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>ac3go - decode AC-3 in the browser</title>
+<style>
+  :root { color-scheme: light dark; }
+  body { font: 15px/1.5 system-ui, sans-serif; max-width: 640px; margin: 40px auto; padding: 0 16px; }
+  h1 { font-size: 22px; }
+  .drop { border: 2px dashed currentColor; border-radius: 10px; padding: 28px; text-align: center; opacity: .7; }
+  .drop.over { opacity: 1; background: rgba(127,127,127,.1); }
+  button { font: inherit; padding: 8px 16px; border-radius: 8px; cursor: pointer; }
+  button:disabled { opacity: .5; cursor: default; }
+  dl { display: grid; grid-template-columns: max-content 1fr; gap: 2px 16px; }
+  dt { opacity: .6; }
+  dd { margin: 0; font-variant-numeric: tabular-nums; }
+  pre { white-space: pre-wrap; opacity: .7; }
+</style>
+</head>
+<body>
+<h1>ac3go &middot; decode AC-3 / E-AC-3 in the browser</h1>
+<p>The decoder is compiled to WebAssembly. Drop an <code>.ac3</code> or
+<code>.eac3</code> elementary stream below: the page probes its header, decodes
+the whole stream to PCM, and plays it through Web Audio - no server, no
+transcoding.</p>
+
+<div class="drop" id="drop">Drop a file here, or <input type="file" id="file" accept=".ac3,.eac3" /></div>
+
+<p>
+  <button id="play" disabled>Play</button>
+  <button id="stop" disabled>Stop</button>
+</p>
+
+<dl id="info"></dl>
+<pre id="log"></pre>
+
+<script src="../wasm_exec.js"></script>
+<script>
+const $ = (id) => document.getElementById(id)
+const log = (m) => { $('log').textContent += m + '\n' }
+
+let ac3, ctx, buffer, source
+
+async function boot() {
+  const go = new Go()
+  const { instance } = await WebAssembly.instantiateStreaming(fetch('../ac3go.wasm'), go.importObject)
+  go.run(instance) // registers Ac3Go, then blocks on select{}: the API is ready at once
+  ac3 = globalThis.Ac3Go
+  log('wasm ready (ac3go ' + ac3.version() + ')')
+}
+
+function show(probe) {
+  const rows = {
+    format: probe.format.toUpperCase(),
+    'sample rate': probe.sampleRate + ' Hz',
+    channels: probe.channels + ' (' + probe.layout + ')',
+    mode: probe.mode + (probe.lfe ? ' + LFE' : ''),
+    bitrate: Math.round(probe.bitRate / 1000) + ' kbit/s',
+    dialnorm: probe.dialnorm + ' dB',
+  }
+  $('info').innerHTML = Object.entries(rows)
+    .map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('')
+}
+
+async function load(file) {
+  stop()
+  $('play').disabled = true
+  const bytes = new Uint8Array(await file.arrayBuffer())
+  const probe = await ac3.probe(bytes)
+  show(probe)
+  log('decoding ' + file.name + ' (' + bytes.length + ' bytes)...')
+  const pcm = await ac3.decode(bytes) // { sampleRate, channels, frames, samples }
+  log('decoded ' + pcm.frames + ' samples/ch, ' + pcm.channels + ' channels')
+
+  ctx ??= new AudioContext()
+  buffer = ctx.createBuffer(pcm.channels, pcm.frames, pcm.sampleRate)
+  for (let ch = 0; ch < pcm.channels; ch++) {
+    const plane = buffer.getChannelData(ch)
+    for (let i = 0; i < pcm.frames; i++) plane[i] = pcm.samples[i * pcm.channels + ch]
+  }
+  $('play').disabled = false
+}
+
+async function play() {
+  if (!buffer) return
+  stop()
+  await ctx.resume()
+  source = ctx.createBufferSource()
+  source.buffer = buffer
+  source.connect(ctx.destination)
+  source.onended = () => { $('stop').disabled = true }
+  source.start()
+  $('stop').disabled = false
+}
+
+function stop() {
+  if (source) { source.stop(); source.disconnect(); source = null }
+  $('stop').disabled = true
+}
+
+const drop = $('drop')
+drop.addEventListener('dragover', (e) => { e.preventDefault(); drop.classList.add('over') })
+drop.addEventListener('dragleave', () => drop.classList.remove('over'))
+drop.addEventListener('drop', (e) => {
+  e.preventDefault(); drop.classList.remove('over')
+  if (e.dataTransfer.files[0]) load(e.dataTransfer.files[0]).catch((err) => log('error: ' + err.message))
+})
+$('file').addEventListener('change', (e) => {
+  if (e.target.files[0]) load(e.target.files[0]).catch((err) => log('error: ' + err.message))
+})
+$('play').addEventListener('click', play)
+$('stop').addEventListener('click', stop)
+
+boot().catch((err) => log('boot error: ' + err.message))
+</script>
+</body>
+</html>
