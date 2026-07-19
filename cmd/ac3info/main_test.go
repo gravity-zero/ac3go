@@ -62,7 +62,9 @@ func TestListSummary(t *testing.T) {
 
 			for _, want := range []string{
 				fmt.Sprintf("frames     %d", c.frames),
-				"0 skipped",
+				// With the comma: "0 skipped" alone is a substring of "20
+				// skipped" and of every other count ending in a zero.
+				", 0 skipped",
 				fmt.Sprintf("crc        0 bad of %d", c.frames),
 				"duration   " + c.duration + " s",
 				"shapes     1 distinct",
@@ -131,10 +133,24 @@ func TestListPerFrameLines(t *testing.T) {
 // the whole point of the tool is that a reader can see them.
 func TestListVerboseFields(t *testing.T) {
 	got := runList(t, fixture(t, "tones_48k_5p1_384k.eac3"), 1, false, true, false)
-	for _, want := range []string{"dialnorm", "acmod", "bsid"} {
+	// These have to be strings the dump alone emits. The bare per-frame line
+	// already names dialnorm, acmod and bsid, so asserting those words would
+	// pass with the whole dump deleted.
+	for _, want := range []string{
+		"syncinfo   fscod=",
+		"bsi        bsid=",
+		"dialnorm   ",
+		"flags      copyrightb=",
+		"audio      starts at bit ",
+	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("verbose dump has no %q:\n%s", want, got)
 		}
+	}
+	// And the dump must be what carries them: the same run without -v must not.
+	terse := runList(t, fixture(t, "tones_48k_5p1_384k.eac3"), 1, false, false, false)
+	if strings.Contains(terse, "syncinfo   fscod=") {
+		t.Errorf("the field dump appears without -v:\n%s", terse)
 	}
 }
 
@@ -154,7 +170,7 @@ func TestListReportsBadCRC(t *testing.T) {
 	if strings.Contains(got, "frames     32") {
 		t.Errorf("a stream with a corrupt frame still reported all 32 frames:\n%s", got)
 	}
-	if strings.Contains(got, "0 skipped") {
+	if strings.Contains(got, ", 0 skipped") {
 		t.Errorf("a corrupt frame's bytes were not reported as skipped:\n%s", got)
 	}
 }

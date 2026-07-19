@@ -398,7 +398,12 @@ func (o *Oracle) mediaFiles(t testing.TB, dir string, max int) []string {
 	out, err := o.exec("find", dir, "-type", "f",
 		"(", "-name", "*.mkv", "-o", "-name", "*.mp4", ")")
 	if err != nil {
-		return nil
+		// Not a skip and not an empty listing: a corpus path the container
+		// cannot see is a broken configuration, and reporting it as "no media
+		// files" is the same lie the comment above cost a session to. An empty
+		// corpus makes find succeed and print nothing; only a real failure
+		// lands here.
+		t.Fatalf("listing the corpus under %s failed: %v", dir, err)
 	}
 	var files []string
 	for _, line := range splitLines(out) {

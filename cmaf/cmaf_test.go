@@ -122,8 +122,10 @@ func split(t *testing.T, fmp4 []byte) (initSeg []byte, segments [][]byte) {
 	}
 	initSeg = fmp4[:firstMoof]
 	bounds = append(bounds, len(fmp4))
-	// Trim a trailing mfra (random-access index) off the last segment: it is not
-	// media and sits after the final mdat.
+	// The last segment keeps the trailing mfra (random-access index) that sits
+	// after the final mdat. It is not media, and leaving it in makes the fixture
+	// more demanding rather than less: Segment has to step over a box that is
+	// not a moof rather than assume the segment ends at one.
 	for i := 0; i < len(bounds)-1; i++ {
 		segments = append(segments, fmp4[bounds[i]:bounds[i+1]])
 	}

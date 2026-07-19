@@ -197,7 +197,11 @@ func FuzzFrameReader(f *testing.F) {
 		fr := NewFrameReader(bytes.NewReader(data))
 		var inFrames int64
 		var clean [][]byte
-		for range 64 {
+		// Both runs stop at the same frame, so that the hostile one is never
+		// asked about a frame the clean one was cut off before reaching. The cap
+		// bounds the work per input; it is not a property of the reader.
+		const maxFrames = 64
+		for range maxFrames {
 			frame, err := fr.Next()
 			if errors.Is(err, io.EOF) {
 				break
@@ -215,12 +219,23 @@ func FuzzFrameReader(f *testing.F) {
 			// parses, and both of its check words hold. Asserting crc2 as well
 			// as crc1 is what pins the reader to returning frames rather than
 			// to returning a sound 5/8 of one with anything at all behind it.
-			if len(frame) < MinFrameSize || len(frame) > MaxAnyFrameSize {
+			if len(frame) > MaxAnyFrameSize {
 				t.Fatalf("returned a %d-byte frame", len(frame))
 			}
 			var h Header
 			if err := ParseHeader(frame, &h); err != nil {
 				t.Fatalf("returned a frame that does not parse: %v", err)
+			}
+			// The floor is the syntax's, not AC-3's for both: MinFrameSize comes
+			// from the AC-3 frame size table, while an enhanced frame states its
+			// size in 16-bit words counted from zero and so can legally be as
+			// small as the six bytes its own sync info needs.
+			minSize := MinFrameSize
+			if isEAC3(h.Sync.Bsid) {
+				minSize = EAC3SyncInfoSize
+			}
+			if len(frame) < minSize {
+				t.Fatalf("returned a %d-byte frame, under the %d-byte floor", len(frame), minSize)
 			}
 			if h.Sync.FrameSize != len(frame) {
 				t.Fatalf("returned %d bytes for a frame of %d", len(frame), h.Sync.FrameSize)
@@ -250,7 +265,7 @@ func FuzzFrameReader(f *testing.F) {
 		}
 		boom := errors.New("mid-stream failure")
 		fr = NewFrameReader(&faultReader{data: data, chunk: chunk, failAt: failAt, err: boom})
-		for i := 0; ; i++ {
+		for i := range maxFrames {
 			frame, err := fr.Next()
 			if err != nil {
 				legalHead := errors.Is(err, ErrByteOrder) && fr.Frames() == 0 && fr.Skipped() == 0

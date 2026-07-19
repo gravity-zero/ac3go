@@ -323,11 +323,17 @@ func FuzzReader(f *testing.F) {
 	// buffer, whatever the input, the requested widths and the skip lengths.
 	f.Fuzz(func(t *testing.T, buf []byte, seed uint8, skip, seek int) {
 		r := NewReader(buf)
-		widths := []uint{uint(seed % 33), uint(seed>>2) % 33, 1, 8, 32, 0}
+		// seed>>2 tops out at 63, so it alone never names the widths either side
+		// of the word; 31 and 32 are listed so the straddling path is reached
+		// whatever the seed.
+		widths := []uint{uint(seed % 33), uint(seed>>2) % 33, 1, 8, 31, 32, 0}
 		for i := 0; i < 64; i++ {
 			switch i % 6 {
 			case 0:
-				r.Uint32(widths[i%len(widths)])
+				// Indexed on the round, not on i: this arm runs only when i is a
+				// multiple of 6, so i%len(widths) would pin every read of a given
+				// execution to one width and leave the rest of the table dead.
+				r.Uint32(widths[(i/6)%len(widths)])
 			case 1:
 				r.Bool()
 			case 2:

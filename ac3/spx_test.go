@@ -14,7 +14,11 @@ func bytesWithSlack(w *bitWriter) []byte { return append(w.buf, 0, 0, 0, 0, 0, 0
 // extension's readers.
 func spxDecoder(b []byte) *Decoder {
 	d := NewDecoder()
+	// Both: readSpxStrategy branches on h.Acmod, and leaving it zero would make
+	// the helper a dual mono decoder claiming to be 3/2. It happens to take the
+	// same branch, which is exactly why the slip would go unnoticed.
 	d.h.Sync.Acmod = Acmod3F2R
+	d.h.Acmod = Acmod3F2R
 	d.nfchans = 5
 	d.spxBandStruct = eac3DefaultSpxBandStruct
 	d.r.Reset(b)

@@ -168,4 +168,14 @@ func TestDecodeBlockSwitchedAgainstReference(t *testing.T) {
 		t.Errorf("short blocks differ from the reference by up to %d LSB, allowed %d",
 			short.max, QuasiExact.MaxLSB)
 	}
+
+	// The short path is what the test is for, but the other two groups are
+	// measured and then only printed, and the long one is most of the fixture.
+	// Without a bar on the whole buffer, a regression that wrecked every long
+	// block would pass here with a line in the log.
+	res, err := Compare(got, want, Dithered)
+	if err != nil {
+		t.Errorf("whole stream: %v", err)
+	}
+	t.Logf("whole stream: %s (bar: %s)", res, Dithered)
 }

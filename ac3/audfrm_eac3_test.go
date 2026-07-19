@@ -69,6 +69,10 @@ func TestEAC3AudioFrameParses(t *testing.T) {
 			d := NewDecoder()
 
 			var frames int
+			// Whether the last block of the previous frame coupled. Coupling
+			// carries across the frame boundary, which is what decides whether
+			// block 0 has coupling exponents to reuse.
+			var cplInUsePrev bool
 			for {
 				frame, err := fr.Next()
 				if err != nil {
@@ -89,9 +93,16 @@ func TestEAC3AudioFrameParses(t *testing.T) {
 				}
 				// The coupling channel is the exception, and not really one: a
 				// block that does not couple has no coupling exponents to state.
-				if d.eac3.cplInUse[0] && d.eac3.expStrategy[0][MaxChannels] == ExpReuse {
-					t.Fatalf("frame %d: block 0 couples but reuses coupling exponents", frames)
+				//
+				// Reuse in block 0 is only wrong when coupling has just come
+				// into use. Coupling that was already running in the previous
+				// frame's last block leaves exponents to reuse, and both the
+				// spec and readExponentsWith allow that - so asserting on
+				// cplInUse[0] alone would reject a stream this decoder decodes.
+				if d.eac3.cplInUse[0] && !cplInUsePrev && d.eac3.expStrategy[0][MaxChannels] == ExpReuse {
+					t.Fatalf("frame %d: coupling starts at block 0 but reuses coupling exponents", frames)
 				}
+				cplInUsePrev = d.eac3.cplInUse[d.h.Sync.NumBlocks-1]
 				// A channel can only use the adaptive hybrid transform when its
 				// six blocks are one set of exponents. This is the invariant the
 				// parse derives it from, checked from the other side.
