@@ -7,6 +7,30 @@ on:
   schedule:
     - cron: "40 4 * * *"
 
+# AC3GO_E2E_REQUIRED is deliberately NOT set anywhere in this file.
+#
+# It turns every reason the end to end harness would skip into a failure, which
+# is what keeps a broken oracle from reading as a green run. But the oracle is a
+# reference decoder in a local container plus a corpus of real media that is not
+# in this repository and never will be, and a hosted runner has neither. Setting
+# it here would not test more, it would fail every job, every time.
+#
+# So the split is: this file proves the decoder against what the repository can
+# carry - unit tests, fixtures, cross builds, fuzzing. The comparison against
+# the reference happens on the development machine, and that is where the
+# variable belongs:
+#
+#   AC3GO_E2E_REQUIRED=1 AC3GO_E2E=docker:evey-server AC3GO_E2E_TOOL=ffmpeg \
+#   AC3GO_E2E_PROBE=ffprobe AC3GO_E2E_CORPUS=/media \
+#   go test ./internal/e2e/ -count=1
+#
+# Without the first variable that command is green whether or not the container
+# answers. With it, a container that has been renamed or rebuilt without ffmpeg
+# fails instead of quietly comparing nothing.
+#
+# If this ever runs on a self-hosted runner that does have the container and the
+# corpus, that job - and only that job - should set it.
+
 jobs:
   test:
     if: github.event_name != 'schedule'

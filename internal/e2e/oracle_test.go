@@ -598,10 +598,57 @@ func TestCorpusSkipsWhenUnset(t *testing.T) {
 	}
 }
 
+// TestRequiredTurnsSkipsIntoFailures is the counterweight to every skip in this
+// harness.
+//
+// The skips are what let "go test ./..." stay green on a machine with no
+// reference decoder, and they are also what would hide the oracle going away:
+// a renamed container reads exactly like a machine that never had one. Setting
+// EnvRequired is the promise that an oracle is there, and the point of the
+// promise is that breaking it fails.
+//
+// Both directions are checked. A mechanism that failed unconditionally would
+// pass the first half of this and make the whole module unrunnable anywhere
+// else.
+func TestRequiredTurnsSkipsIntoFailures(t *testing.T) {
+	for _, c := range []struct {
+		name string
+		fn   func(testing.TB)
+	}{
+		{"no mode", func(tb testing.TB) { Setup(tb) }},
+		{"no corpus", func(tb testing.TB) { (&Oracle{}).Corpus(tb) }},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			t.Setenv(EnvMode, "")
+			t.Setenv(EnvTool, "")
+
+			t.Setenv(EnvRequired, "")
+			if rec := runAndRecord(t, c.fn); !rec.skipped || rec.failed {
+				t.Errorf("unset: skipped=%v failed=%v, want a skip: a machine with no "+
+					"oracle must still be able to run this module", rec.skipped, rec.failed)
+			}
+
+			t.Setenv(EnvRequired, "1")
+			if rec := runAndRecord(t, c.fn); rec.skipped || !rec.failed {
+				t.Errorf("%s=1: skipped=%v failed=%v, want a failure: a promised oracle "+
+					"that is not there is the thing this exists to catch",
+					EnvRequired, rec.skipped, rec.failed)
+			}
+		})
+	}
+}
+
 // runAndReportSkip runs fn against a recording testing.TB and reports whether
 // it skipped. Setup calls Skip on its argument, which stops the goroutine it
 // runs on, so it gets one of its own.
 func runAndReportSkip(t *testing.T, fn func(testing.TB)) bool {
+	t.Helper()
+	return runAndRecord(t, fn).skipped
+}
+
+// runAndRecord is runAndReportSkip with the whole outcome, for the callers that
+// need to tell a skip from a failure rather than just spot a skip.
+func runAndRecord(t *testing.T, fn func(testing.TB)) *recorder {
 	t.Helper()
 	rec := &recorder{TB: t}
 	done := make(chan struct{})
@@ -611,7 +658,7 @@ func runAndReportSkip(t *testing.T, fn func(testing.TB)) bool {
 		fn(rec)
 	}()
 	<-done
-	return rec.skipped
+	return rec
 }
 
 // recorder stands in for a testing.TB so that a skip can be observed instead of

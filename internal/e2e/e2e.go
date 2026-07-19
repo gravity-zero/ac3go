@@ -67,6 +67,20 @@ const (
 	EnvExtract  = "AC3GO_E2E_EXTRACT_ARGV"
 	EnvDecode   = "AC3GO_E2E_DECODE_ARGV"
 	EnvProbeCmd = "AC3GO_E2E_PROBE_ARGV"
+
+	// EnvRequired asserts that an oracle is available. Set it and every reason
+	// this harness would otherwise skip becomes a failure.
+	//
+	// It exists because the skips are indistinguishable from success. A stale
+	// container name, an image rebuilt without the tool, a corpus path the
+	// runner cannot see: each one is a skip, so the run stays green having
+	// compared nothing, and it stays green every day after. The comparison is
+	// the only thing that proves this decoder against the reference, and losing
+	// it silently is worse than not having it.
+	//
+	// Set it wherever the oracle is supposed to exist - which is the developer's
+	// machine, not a hosted runner. See the note in .github/workflows/ci.yml.
+	EnvRequired = "AC3GO_E2E_REQUIRED"
 )
 
 // Default argv for the reference decoder. They are templates, not a tool: the
@@ -138,20 +152,45 @@ func (o *Oracle) remove(paths ...string) {
 	_, _ = o.exec(append([]string{"rm", "-f"}, paths...)...)
 }
 
+// Required reports whether the environment claims an oracle must be available.
+// See EnvRequired.
+func Required() bool {
+	switch os.Getenv(EnvRequired) {
+	case "", "0", "false":
+		return false
+	}
+	return true
+}
+
+// unavailable reports that no oracle can be had. It skips, which is what lets
+// this module's tests run on a machine that has no reference decoder - unless
+// EnvRequired says one was promised, in which case its absence is the failure.
+func unavailable(t testing.TB, format string, args ...any) {
+	t.Helper()
+	if Required() {
+		t.Fatalf("%s is set but the oracle is unavailable: "+format,
+			append([]any{EnvRequired}, args...)...)
+	}
+	t.Skipf(format, args...)
+}
+
 // Setup returns an Oracle, or skips the test when the environment does not
 // describe one. It also skips when the environment describes a runner that
 // does not answer, so that a stale container name is a skip and not a failure
 // of this module.
+//
+// Set EnvRequired to turn every one of those skips into a failure, on a machine
+// where the oracle is supposed to be there.
 func Setup(t testing.TB) *Oracle {
 	t.Helper()
 
 	mode := os.Getenv(EnvMode)
 	if mode == "" {
-		t.Skipf("%s is not set: no reference decoder to compare against", EnvMode)
+		unavailable(t, "%s is not set: no reference decoder to compare against", EnvMode)
 	}
 	tool := os.Getenv(EnvTool)
 	if tool == "" {
-		t.Skipf("%s is set but %s is not: no reference decoder named", EnvMode, EnvTool)
+		unavailable(t, "%s is set but %s is not: no reference decoder named", EnvMode, EnvTool)
 	}
 
 	name, err := newWorkdirName()
@@ -175,7 +214,7 @@ func Setup(t testing.TB) *Oracle {
 		// removes it.
 		o.workdir = t.TempDir()
 		if _, err := exec.LookPath(tool); err != nil {
-			t.Skipf("%s=local but %q is not on the PATH: %v", EnvMode, tool, err)
+			unavailable(t, "%s=local but %q is not on the PATH: %v", EnvMode, tool, err)
 		}
 	case strings.HasPrefix(mode, "docker:"):
 		o.container = strings.TrimPrefix(mode, "docker:")
@@ -183,7 +222,7 @@ func Setup(t testing.TB) *Oracle {
 			t.Fatalf("%s=%q names no container", EnvMode, mode)
 		}
 		if err := o.ping(); err != nil {
-			t.Skipf("container %q is not usable: %v", o.container, err)
+			unavailable(t, "container %q is not usable: %v", o.container, err)
 		}
 	default:
 		t.Fatalf("%s=%q: want \"local\" or \"docker:<container>\"", EnvMode, mode)
@@ -191,14 +230,14 @@ func Setup(t testing.TB) *Oracle {
 
 	if o.container != "" {
 		if _, err := o.exec(o.tool, "-version"); err != nil {
-			t.Skipf("%q does not run in container %q: %v", o.tool, o.container, err)
+			unavailable(t, "%q does not run in container %q: %v", o.tool, o.container, err)
 		}
 		// Deliberately not "mkdir -p": the workdir must not already exist. If
 		// it somehow did, this Oracle would be sharing it, which is the one
 		// thing the private name is there to prevent, and failing is better
 		// than judging a decoder on another run's files.
 		if _, err := o.exec("mkdir", o.workdir); err != nil {
-			t.Skipf("cannot create %s in container %q: %v", o.workdir, o.container, err)
+			unavailable(t, "cannot create %s in container %q: %v", o.workdir, o.container, err)
 		}
 		t.Cleanup(func() { _, _ = o.exec("rm", "-rf", o.workdir) })
 	}
@@ -225,7 +264,7 @@ func (o *Oracle) ping() error {
 func (o *Oracle) Corpus(t testing.TB) string {
 	t.Helper()
 	if o.corpus == "" {
-		t.Skipf("%s is not set: no real media to test against", EnvCorpus)
+		unavailable(t, "%s is not set: no real media to test against", EnvCorpus)
 	}
 	return o.corpus
 }
