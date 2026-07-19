@@ -70,6 +70,23 @@ func TestSynthesisProducesTheTone(t *testing.T) {
 				if at == 0 {
 					t.Fatalf("channel %d is silent at its own %v Hz", ch, hz)
 				}
+
+				// How loud, not just where. Every assertion below compares the
+				// channel against itself, so they all hold under a flat gain
+				// error: halving synthesisGain leaves every ratio intact and
+				// every one of them green.
+				//
+				// The anchor is outside this package. The fixtures were encoded
+				// from tones at exactly an eighth of full scale, which is the
+				// -18 dBFS alignment level, and a sine of amplitude A over n
+				// samples puts (A*n/2)^2 in its own bin. So the amplitude the
+				// bin implies has to come back to an eighth.
+				const wantAmp = 0.125
+				if amp := 2 * math.Sqrt(at) / float64(len(x)); math.Abs(amp-wantAmp) > wantAmp*0.01 {
+					t.Errorf("channel %d comes back at amplitude %.6f, want %.3f "+
+						"(%.2f dB out): the filter bank has the tone but not its level",
+						ch, amp, wantAmp, 20*math.Log10(amp/wantAmp))
+				}
 				// The tone has to dominate: every other channel's frequency,
 				// and a few frequencies that belong to nothing, have to come
 				// back far quieter than this channel's own.

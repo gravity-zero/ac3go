@@ -85,6 +85,27 @@ func TestLatabIsLogAddition(t *testing.T) {
 	}
 }
 
+// TestLatabIsMonotonic is the structural half of the check above, and it is
+// needed because the arithmetic half is blunt.
+//
+// The tolerance there cannot be tightened: the table's own worst deviation from
+// that model is 0,97, so the bar has to sit above 1 and a great many single
+// entry typos fit under it. Measured over every possible off by one on every
+// entry, the arithmetic catches 45 % of them; this catches 72 %, and together
+// they catch 82 %. The file's header warns that one wrong entry silently shifts
+// a band's allocation, which is worth more than one angle on.
+//
+// The property itself is not a heuristic: latab[i] is what a power 2i steps
+// down adds to a level, and burying a power further can only ever add less.
+func TestLatabIsMonotonic(t *testing.T) {
+	for i := 1; i < len(latab); i++ {
+		if latab[i] > latab[i-1] {
+			t.Errorf("latab[%d] = %d rises above latab[%d] = %d: a quieter power adds more",
+				i, latab[i], i-1, latab[i-1])
+		}
+	}
+}
+
 // TestBaptabIsMonotonic checks the one property a signal to mask ratio table
 // must have: more headroom over the mask never buys fewer bits.
 func TestBaptabIsMonotonic(t *testing.T) {

@@ -94,6 +94,65 @@ func TestDownmix51Coeffs(t *testing.T) {
 	}
 }
 
+// TestDownmixCoeffsPerMode works every remaining mode through by hand, the way
+// TestDownmix51Coeffs does for 3/2.
+//
+// TestDownmixCoeffsSumToOne cannot stand in for this. setDownmixCoeffs ends by
+// dividing each output by its own sum, so "sums to one" restates the last four
+// lines of the function and holds whatever the coefficients were before them.
+// Swapping Ls and Rs in 2/2, or giving the centre of 3/1 two different levels,
+// leaves every sum at one - so what needs pinning is which channel reaches
+// which output, and at what level relative to the others.
+//
+// The wants here are the levels the spec names, written out before any
+// normalisation; the test divides by its own sum rather than by the code's.
+func TestDownmixCoeffsPerMode(t *testing.T) {
+	// Code 1 is -4,5 dB at the centre and -6 dB at the surrounds.
+	const cmix, smix = levelMinus4Point5dB, 0.5
+	// One surround feeding two outputs is 3 dB down on each, which is what
+	// splitting a channel across two costs if its power is to survive.
+	const split = smix * levelMinus3dB
+
+	for _, c := range []struct {
+		name   string
+		acmod  uint8
+		lo, ro []float64
+	}{
+		// L C R: the centre is the only channel that reaches both sides.
+		{"3/0", Acmod3F, []float64{1, cmix, 0}, []float64{0, cmix, 1}},
+		// L R S: the lone surround reaches both, evenly.
+		{"2/1", Acmod2F1R, []float64{1, 0, split}, []float64{0, 1, split}},
+		// L C R S: both of the above at once.
+		{"3/1", Acmod3F1R, []float64{1, cmix, 0, split}, []float64{0, cmix, 1, split}},
+		// L R Ls Rs: two surrounds, one per side, no split and no crossing.
+		{"2/2", Acmod2F2R, []float64{1, 0, smix, 0}, []float64{0, 1, 0, smix}},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			h := &Header{Acmod: c.acmod}
+			h.HasCmixlev = c.acmod&1 != 0 && c.acmod != AcmodMono
+			h.Cmixlev = 1
+			h.HasSurmixlev = c.acmod&4 != 0
+			h.Surmixlev = 1
+
+			var got downmixCoeffs
+			setDownmixCoeffs(h, &got)
+
+			for out, want := range [2][]float64{c.lo, c.ro} {
+				var sum float64
+				for _, v := range want {
+					sum += v
+				}
+				for ch, v := range want {
+					if math.Abs(float64(got[out][ch])-v/sum) > 1e-6 {
+						t.Errorf("out %d ch %d: %v, want %v",
+							out, ch, got[out][ch], v/sum)
+					}
+				}
+			}
+		})
+	}
+}
+
 // TestDownmixMonoSurroundSplits pins the 2/1 and 3/1 modes, whose single
 // surround has to reach both outputs without gaining power on the way.
 func TestDownmixMonoSurroundSplits(t *testing.T) {

@@ -324,15 +324,19 @@ func TestDither(t *testing.T) {
 			minv = math.Min(minv, float64(v))
 			maxv = math.Max(maxv, float64(v))
 		}
-		if minv < -ditherScale || maxv >= ditherScale {
-			t.Errorf("dither spans %v..%v, want within +/-%v", minv, maxv, ditherScale)
+		// The spec's own number, clause 6.3.4, not the constant under test:
+		// writing ditherScale on both sides would assert only that the dither
+		// fills whatever range the code happened to pick.
+		const specScale = 0.707
+		if minv < -specScale || maxv >= specScale {
+			t.Errorf("dither spans %v..%v, want within +/-%v", minv, maxv, specScale)
 		}
 		// A uniform distribution either side of zero: the mean of 65 536 draws
 		// should sit far below one draw's worth of the range.
 		if mean := sum / n; math.Abs(mean) > 0.01 {
 			t.Errorf("dither mean is %v, want about zero", mean)
 		}
-		if maxv < ditherScale*0.99 || minv > -ditherScale*0.99 {
+		if maxv < specScale*0.99 || minv > -specScale*0.99 {
 			t.Errorf("dither only spans %v..%v, want to fill the range", minv, maxv)
 		}
 	})
