@@ -291,7 +291,7 @@ func ParseHeader(frame []byte, h *Header) error {
 		h.Acmod = h.Sync.Acmod
 		h.Lfeon = h.Sync.Lfeon
 		r.SeekBit(bsidBit + 5)
-		return h.parseEAC3BSI(&r)
+		return h.parseEAC3BSI(&r, len(frame))
 	}
 
 	r.Skip(5) // bsid

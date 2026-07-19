@@ -152,7 +152,7 @@ func parseEAC3SyncInfo(b []byte, si *SyncInfo) error {
 // with the programme rather than about how to decode it - but every field of
 // them has to be read anyway, because they stand between the syncword and the
 // audio and the audio does not say where it starts.
-func (h *Header) parseEAC3BSI(r *bitstream.Reader) error {
+func (h *Header) parseEAC3BSI(r *bitstream.Reader, have int) error {
 	// The mix levels default rather than being absent: a frame that carries no
 	// mixing metadata is not a frame with no centre level, it is a frame at the
 	// level the spec names. They are indices into the gain levels here, not the
@@ -221,7 +221,11 @@ func (h *Header) parseEAC3BSI(r *bitstream.Reader) error {
 	}
 
 	if err := r.Err(); err != nil {
-		return shortFrameError(h.Sync.FrameSize, h.Sync.FrameSize+1)
+		// However many bytes are in hand, at least one more was needed. It is
+		// the buffer that is short here and not the frame: reporting the size
+		// the frame states would claim to hold bytes that never arrived, which
+		// on a truncated read is the opposite of what happened.
+		return shortFrameError(have, have+1)
 	}
 	h.AudioStartBit = r.BitPos()
 	return nil
