@@ -224,6 +224,48 @@ func TestDecodeToneIsDeterministic(t *testing.T) {
 	}
 }
 
+// TestDecodeFrameRejectsATruncatedEAC3Frame covers the buffer that stops after
+// the header, which is a different case in the two syntaxes and used to be a
+// panic in one of them.
+//
+// An AC-3 frame's BSI runs long enough that a truncated buffer fails inside
+// ParseHeader, which is why TestDecoderRejects' "truncated to the header" case
+// has always passed. An enhanced frame's fits in about seven bytes, so
+// ParseHeader succeeds and returns a header stating a frame far longer than the
+// bytes in hand. decodeDependent71 then sliced at that stated size and went off
+// the end of the buffer.
+//
+// Found by FuzzDecodeFrame; the input it minimised is kept as a seed. Callers
+// hand this untrusted media, so the requirement is an error, not a crash.
+func TestDecodeFrameRejectsATruncatedEAC3Frame(t *testing.T) {
+	raw, err := os.ReadFile(filepath.Join("testdata", "tones_48k_stereo_192k.eac3"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var h Header
+	if err := ParseHeader(raw, &h); err != nil {
+		t.Fatal(err)
+	}
+
+	d := NewDecoder()
+	// Every cut that still holds a parsable header, which is what makes this a
+	// decode of a short buffer rather than a parse of one.
+	for n := EAC3SyncInfoSize; n < h.Sync.FrameSize; n++ {
+		var probe Header
+		if ParseHeader(raw[:n], &probe) != nil {
+			continue
+		}
+		err := d.DecodeFrame(raw[:n])
+		if err == nil {
+			t.Fatalf("cut at %d: DecodeFrame accepted %d bytes of a %d-byte frame",
+				n, n, h.Sync.FrameSize)
+		}
+		if !errors.Is(err, ErrShortFrame) {
+			t.Fatalf("cut at %d: %v, want ErrShortFrame", n, err)
+		}
+	}
+}
+
 func TestDecoderRejects(t *testing.T) {
 	frames := toneFrames(t, "tones_48k_stereo_192k.ac3")
 	good := frames[1]

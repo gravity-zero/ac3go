@@ -321,6 +321,15 @@ func (d *Decoder) DecodeFrame(frame []byte) error {
 	if err := ParseHeader(frame, &d.h); err != nil {
 		return err
 	}
+	// ParseHeader tolerates a buffer that stops after the header: it parses a
+	// header, not a frame, and the frame reader is what guarantees whole ones.
+	// Decoding needs the whole frame though, and saying so here is what keeps a
+	// truncated buffer an error rather than a panic - decodeDependent71 slices
+	// at FrameSize, and the audio path would read another frame's bytes as this
+	// one's. Callers hand this untrusted media; it must not crash on a short read.
+	if len(frame) < d.h.Sync.FrameSize {
+		return shortFrameError(len(frame), d.h.Sync.FrameSize)
+	}
 	full := frame
 	if len(frame) > d.h.Sync.FrameSize {
 		frame = frame[:d.h.Sync.FrameSize]
