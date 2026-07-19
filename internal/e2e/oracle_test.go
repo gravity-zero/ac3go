@@ -641,8 +641,16 @@ func TestRequiredTurnsSkipsIntoFailures(t *testing.T) {
 // runAndReportSkip runs fn against a recording testing.TB and reports whether
 // it skipped. Setup calls Skip on its argument, which stops the goroutine it
 // runs on, so it gets one of its own.
+//
+// It clears EnvRequired first. Every caller is asserting that some
+// misconfiguration is a skip, and EnvRequired is precisely what turns those
+// skips into failures - so inheriting it from the environment would make all of
+// them fail during a real oracle run, which is the one run where they are least
+// welcome and hardest to read. Clearing it here rather than in each test is so
+// that the next such test cannot forget to.
 func runAndReportSkip(t *testing.T, fn func(testing.TB)) bool {
 	t.Helper()
+	t.Setenv(EnvRequired, "")
 	return runAndRecord(t, fn).skipped
 }
 
