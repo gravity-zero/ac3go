@@ -147,13 +147,22 @@ func FuzzParseHeader(f *testing.F) {
 		if db := h.Dialnorm2DB(); db < -31 || db > -1 {
 			t.Fatalf("Dialnorm2DB = %d, outside [-31, -1]", db)
 		}
-		// Zero is a level, not an absence: an enhanced frame states a direct
-		// index into the gain levels and index 7 asks for the centre to be
-		// dropped from the downmix entirely. An AC-3 frame has no code for
-		// that, so zero would be a table slip there.
-		if lv := h.CenterMixLevel(); lv < 0 || lv > 1 || (lv == 0 && !isEAC3(h.Sync.Bsid)) {
+		// The enhanced syntax states a direct index into the gain levels, so an
+		// enhanced frame can name a boost as well as an attenuation, and index 7
+		// asks for the centre to be dropped from the downmix entirely - zero is
+		// a level there, not an absence. An AC-3 frame indexes tables 4.16 and
+		// 4.17, which name attenuations only, so a gain above unity or a zero
+		// would be a table slip.
+		maxLevel := float32(1)
+		if isEAC3(h.Sync.Bsid) {
+			maxLevel = levelPlus3dB
+		}
+		if lv := h.CenterMixLevel(); lv < 0 || lv > maxLevel || (lv == 0 && !isEAC3(h.Sync.Bsid)) {
 			t.Fatalf("CenterMixLevel = %v", lv)
 		}
+		// The surround level is the exception: the spec gives the field only the
+		// bottom half of the table, and the parser clamps it there, so no
+		// surround gain above -1.5 dB can reach here whatever the syntax.
 		if lv := h.SurroundMixLevel(); lv < 0 || lv > 1 {
 			t.Fatalf("SurroundMixLevel = %v", lv)
 		}

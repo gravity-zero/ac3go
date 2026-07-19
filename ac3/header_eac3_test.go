@@ -187,6 +187,14 @@ func TestEAC3MixLevelsAreIndicesNotCodes(t *testing.T) {
 		t.Errorf("CenterMixLevel = %v, want %v: the enhanced field indexes the gain levels", got, levelMinus3dB)
 	}
 
+	// Index 0 is a boost, not an attenuation. The AC-3 tables name none, so a
+	// centre level above unity only ever comes from the enhanced syntax - which
+	// is why nothing may assume the mix levels sit in [0, 1].
+	h.Cmixlev = 0
+	if got := h.CenterMixLevel(); got != levelPlus3dB {
+		t.Errorf("CenterMixLevel = %v, want %v: index 0 names a 3 dB boost", got, levelPlus3dB)
+	}
+
 	// Index 7 is the level that is no level: drop the channel from the downmix.
 	h.Cmixlev = 7
 	if got := h.CenterMixLevel(); got != 0 {
