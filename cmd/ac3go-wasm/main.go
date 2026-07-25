@@ -165,13 +165,19 @@ func decode(_ js.Value, args []js.Value) any {
 		}
 	}
 
-	var planes [][]float32
-	var channels, sampleRate int
+	var channels, sampleRate, frames, total int
 	var layout pcm.Layout
+	var chunks js.Value
+	var buf []byte
 	// The whole remaining stream is handed to each decode, and the reader
 	// advances by the access unit rather than one syncframe: a 7.1 access unit
 	// is an independent substream followed by a dependent one, and the decoder
 	// needs both in view to merge them into eight channels.
+	//
+	// Each access unit's PCM is copied out to a JS chunk right away instead of
+	// being accumulated on the Go heap: TinyGo's collectors size the heap at a
+	// large multiple of the per-call allocation churn, so keeping the live set
+	// at one access unit keeps the wasm memory flat no matter the stream length.
 	pos := data
 	for len(pos) > 0 {
 		var h ac3.Header
@@ -181,30 +187,42 @@ func decode(_ js.Value, args []js.Value) any {
 		if d.DecodeFrame(pos) != nil {
 			break
 		}
-		if planes == nil {
+		if chunks.IsUndefined() {
 			channels = d.OutputChannels()
 			sampleRate = d.Header().Sync.SampleRate
 			layout = d.OutputLayout()
-			planes = make([][]float32, channels)
+			chunks = js.Global().Get("Array").New()
 		}
+		n := len(d.Samples(0))
+		need := n * channels * 4
+		if cap(buf) < need {
+			buf = make([]byte, need)
+		}
+		buf = buf[:need]
 		for ch := 0; ch < channels; ch++ {
-			planes[ch] = append(planes[ch], d.Samples(ch)...)
+			samples := d.Samples(ch)
+			for i, v := range samples {
+				binary.LittleEndian.PutUint32(buf[(i*channels+ch)*4:], math.Float32bits(v))
+			}
 		}
+		u8 := js.Global().Get("Uint8Array").New(need)
+		js.CopyBytesToJS(u8, buf)
+		chunks.Call("push", u8)
+		frames += n
+		total += need
 		pos = pos[d.AccessUnitSize():]
 	}
-	if planes == nil {
+	if chunks.IsUndefined() {
 		return fail("ac3go: no frame decoded")
 	}
 
-	frames := len(planes[0])
-	raw := make([]byte, frames*channels*4)
-	for i := 0; i < frames; i++ {
-		for ch := 0; ch < channels; ch++ {
-			binary.LittleEndian.PutUint32(raw[(i*channels+ch)*4:], math.Float32bits(planes[ch][i]))
-		}
+	out := js.Global().Get("Uint8Array").New(total)
+	off := 0
+	for i, ln := 0, chunks.Length(); i < ln; i++ {
+		c := chunks.Index(i)
+		out.Call("set", c, off)
+		off += c.Get("length").Int()
 	}
-	out := js.Global().Get("Uint8Array").New(len(raw))
-	js.CopyBytesToJS(out, raw)
 
 	res := js.Global().Get("Object").New()
 	res.Set("sampleRate", sampleRate)
