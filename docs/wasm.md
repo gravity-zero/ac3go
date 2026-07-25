@@ -32,6 +32,23 @@ Check the build end to end under Node (also a good CI gate):
 make wasm-smoke
 ```
 
+### Smaller module with TinyGo
+
+The same entry point builds with [TinyGo](https://tinygo.org) (tested with
+0.41.1), shrinking the module from ~2.9 MB to ~390 KB (~160 KB gzipped) - the
+browser's compile step scales with module size, so startup on a slow CPU (a TV,
+a low-end phone) drops accordingly. The output PCM is bit-identical to the Go
+build's, and decoding is as fast or faster.
+
+```bash
+tinygo build -target wasm -no-debug -opt=z -o web/ac3go.wasm ./cmd/ac3go-wasm
+cp "$(tinygo env TINYGOROOT)/targets/wasm_exec.js" web/wasm_exec.js
+```
+
+The one trap: TinyGo ships **its own `wasm_exec.js`**, incompatible with the
+one in the Go toolchain. Always ship the shim from the same toolchain that
+built the module.
+
 ## The API
 
 The module registers a global `Ac3Go` object:
