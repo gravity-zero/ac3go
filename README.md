@@ -2,7 +2,7 @@
 
 [![Go Reference](https://pkg.go.dev/badge/github.com/gravity-zero/ac3go.svg)](https://pkg.go.dev/github.com/gravity-zero/ac3go)
 [![CI](https://github.com/gravity-zero/ac3go/actions/workflows/ci.yml/badge.svg)](https://github.com/gravity-zero/ac3go/actions/workflows/ci.yml)
-[![License: PolyForm NC 1.0.0](https://img.shields.io/badge/License-PolyForm%20NC%201.0.0-blue.svg)](LICENSE.md)
+[![License: AGPL v3](https://img.shields.io/badge/License-AGPL%20v3-blue.svg)](LICENSE.md)
 
 **Pure-Go AC-3 and E-AC-3 decoder.** Turn an AC-3 or Enhanced AC-3 (E-AC-3)
 bitstream into PCM - in-process, with no external tools, no cgo and zero
@@ -270,5 +270,6 @@ make vet           # vet for the host and for 32-bit
 
 ## License
 
-[PolyForm Noncommercial 1.0.0](LICENSE.md). Noncommercial use is free; any
-commercial use requires a separate license from the author.
+[GNU AGPLv3](LICENSE.md). Free software: use, modify and redistribute under the
+same license, including over a network. For a commercial license under
+different terms, contact the author.
