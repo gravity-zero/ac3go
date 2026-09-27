@@ -448,3 +448,83 @@ func TestDownmixFailedFrameIsAnError(t *testing.T) {
 		}
 	}
 }
+
+// altHeader51 is a 3/2 header in the alternate syntax (bsid 6, Annex D) whose
+// extended information states Lo/Ro mix levels of its own.
+func altHeader51(cmixlev, surmixlev, lorocmixlev, lorosurmixlev uint8) *Header {
+	h := header51(cmixlev, surmixlev)
+	h.Sync.Bsid = AltBSID
+	h.Xbsi1e = true
+	h.Lorocmixlev, h.Lorosurmixlev = lorocmixlev, lorosurmixlev
+	return h
+}
+
+// TestAltSyntaxLoRoMixLevels pins that an alternate syntax frame stating Lo/Ro
+// mix levels is mixed at those, not at the two bit codes of the ordinary BSI.
+// The extended fields are three bit indices into the same levels the enhanced
+// syntax uses, and they are the ones a Lo/Ro downmix is for; the reference
+// decoder applies them. Measured on real bsid 6 5.1 cores: cmixlev -3 dB and
+// surmixlev -6 dB, lorocmixlev -3 dB and lorosurmixlev -4.5 dB, and the
+// reference's stereo mix fits C/L 0.707 and Ls/L 0.594 - the extended pair.
+func TestAltSyntaxLoRoMixLevels(t *testing.T) {
+	h := altHeader51(0, 1, 4, 5) // the measured case
+	if got, want := h.CenterMixLevel(), float32(levelMinus3dB); got != want {
+		t.Errorf("CenterMixLevel = %v, want %v (lorocmixlev 4, -3 dB)", got, want)
+	}
+	if got, want := h.SurroundMixLevel(), float32(levelMinus4Point5dB); got != want {
+		t.Errorf("SurroundMixLevel = %v, want %v (lorosurmixlev 5, -4.5 dB), not surmixlev's -6 dB", got, want)
+	}
+
+	// The extended centre level reaches the whole table, louder than unity
+	// included, which the two bit code never could.
+	if got, want := altHeader51(0, 0, 0, 5).CenterMixLevel(), float32(levelPlus3dB); got != want {
+		t.Errorf("lorocmixlev 0: CenterMixLevel = %v, want %v (+3 dB)", got, want)
+	}
+	// The surround one is held to -1.5 dB and below, as the enhanced syntax's is.
+	if got, want := altHeader51(0, 0, 4, 0).SurroundMixLevel(), float32(levelMinus1Point5dB); got != want {
+		t.Errorf("lorosurmixlev 0: SurroundMixLevel = %v, want %v (clamped to -1.5 dB)", got, want)
+	}
+
+	// Without the extended information, the ordinary codes stand.
+	plain := altHeader51(0, 1, 4, 5)
+	plain.Xbsi1e = false
+	if got, want := plain.SurroundMixLevel(), float32(levelMinus6dB); got != want {
+		t.Errorf("no xbsi1: SurroundMixLevel = %v, want surmixlev's %v", got, want)
+	}
+	// And a channel the mode does not code is still not mixed at any level.
+	stereo := altHeader51(0, 1, 4, 5)
+	stereo.Acmod, stereo.HasCmixlev, stereo.HasSurmixlev = AcmodStereo, false, false
+	if stereo.CenterMixLevel() != 1 || stereo.SurroundMixLevel() != 1 {
+		t.Errorf("2/0 with xbsi1: levels %v/%v, want 1/1: there is no centre or surround",
+			stereo.CenterMixLevel(), stereo.SurroundMixLevel())
+	}
+}
+
+// TestDownmixRecomputesOnMixLevelChange pins that the coefficients follow the
+// header frame by frame: whatever a mix level is stated in, a change of it
+// mid-stream reaches the mix, and a change of mode does too.
+func TestDownmixRecomputesOnMixLevelChange(t *testing.T) {
+	d := NewDecoder()
+	if err := d.SetDownmix(pcm.LayoutStereo); err != nil {
+		t.Fatal(err)
+	}
+	steps := []struct {
+		name string
+		h    *Header
+	}{
+		{"alt syntax, lorosurmixlev -4.5 dB", altHeader51(0, 1, 4, 5)},
+		{"alt syntax, lorosurmixlev -6 dB", altHeader51(0, 1, 4, 6)},
+		{"alt syntax, lorocmixlev -4.5 dB", altHeader51(0, 1, 5, 6)},
+		{"ordinary syntax", header51(0, 1)},
+		{"3/0", func() *Header { h := header51(1, 0); h.Acmod, h.HasSurmixlev = Acmod3F, false; return h }()},
+	}
+	for _, s := range steps {
+		d.h = *s.h
+		d.updateDownmix()
+		var want downmixCoeffs
+		setDownmixCoeffs(&d.h, &want)
+		if d.dmixCoeffs != want {
+			t.Errorf("%s: kept stale coefficients %v, want %v", s.name, d.dmixCoeffs[0], want[0])
+		}
+	}
+}

@@ -150,7 +150,7 @@ type Decoder struct {
 	// fields the coefficients were computed from.
 	dmixChannels int
 	dmixCoeffs   downmixCoeffs
-	dmixFor      uint16
+	dmixFor      uint32
 	dmix         [2][BlocksPerFrame * windowLen]float32
 
 	// What the enhanced syntax's audio frame field said. Empty for AC-3, which

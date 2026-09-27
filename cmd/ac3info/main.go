@@ -152,11 +152,17 @@ func writeFields(out *bufio.Writer, h *ac3.Header) {
 		h.Sync.Fscod, h.Sync.SampleRate, h.Sync.Frmsizecod, h.Sync.FrameSize, h.Sync.BitRate/1000, h.Sync.CRC1)
 	p("bsi        bsid=%d  bsmod=%d (%s)  acmod=%d (%s)  lfeon=%v",
 		h.Sync.Bsid, h.Bsmod, h.BsmodName(), h.Acmod, h.AcmodName(), h.Lfeon)
-	if h.HasCmixlev {
+	// With xbsi1 the downmix levels are the Lo/Ro ones stated there, so the
+	// gain goes on that line rather than next to a code that does not set it.
+	if h.HasCmixlev && !h.Xbsi1e {
 		p("cmixlev    %d (x%.3f)", h.Cmixlev, h.CenterMixLevel())
+	} else if h.HasCmixlev {
+		p("cmixlev    %d", h.Cmixlev)
 	}
-	if h.HasSurmixlev {
+	if h.HasSurmixlev && !h.Xbsi1e {
 		p("surmixlev  %d (x%.3f)", h.Surmixlev, h.SurroundMixLevel())
+	} else if h.HasSurmixlev {
+		p("surmixlev  %d", h.Surmixlev)
 	}
 	if h.HasDsurmod {
 		p("dsurmod    %d", h.Dsurmod)
@@ -180,8 +186,15 @@ func writeFields(out *bufio.Writer, h *ac3.Header) {
 		p("timecode   timecod1e=%v timecod1=%d  timecod2e=%v timecod2=%d", h.Timecod1e, h.Timecod1, h.Timecod2e, h.Timecod2)
 	}
 	if h.Xbsi1e {
-		p("xbsi1      dmixmod=%d  ltrtcmixlev=%d  ltrtsurmixlev=%d  lorocmixlev=%d  lorosurmixlev=%d",
-			h.Dmixmod, h.Ltrtcmixlev, h.Ltrtsurmixlev, h.Lorocmixlev, h.Lorosurmixlev)
+		var cgain, sgain string
+		if h.HasCmixlev {
+			cgain = fmt.Sprintf(" (x%.3f)", h.CenterMixLevel())
+		}
+		if h.HasSurmixlev {
+			sgain = fmt.Sprintf(" (x%.3f)", h.SurroundMixLevel())
+		}
+		p("xbsi1      dmixmod=%d  ltrtcmixlev=%d  ltrtsurmixlev=%d  lorocmixlev=%d%s  lorosurmixlev=%d%s",
+			h.Dmixmod, h.Ltrtcmixlev, h.Ltrtsurmixlev, h.Lorocmixlev, cgain, h.Lorosurmixlev, sgain)
 	}
 	if h.Xbsi2e {
 		p("xbsi2      dsurexmod=%d  dheadphonmod=%d  adconvtyp=%v", h.Dsurexmod, h.Dheadphonmod, h.Adconvtyp)

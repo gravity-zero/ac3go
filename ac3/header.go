@@ -518,6 +518,14 @@ func (h *Header) CenterMixLevel() float32 {
 	if !h.HasCmixlev {
 		return 1
 	}
+	// The alternate syntax's extended information restates the level for the
+	// Lo/Ro downmix, on the enhanced syntax's three bit scale, and it is the
+	// one to apply: the ordinary code is what a decoder that does not read
+	// Annex D falls back on. The reference applies it too - measured, not read:
+	// on real bsid 6 cores its stereo mix fits the extended levels.
+	if h.Xbsi1e {
+		return gainLevels[h.Lorocmixlev&7]
+	}
 	if h.Cmixlev > 2 {
 		return centerMixLevels[1]
 	}
@@ -535,6 +543,9 @@ func (h *Header) SurroundMixLevel() float32 {
 	}
 	if !h.HasSurmixlev {
 		return 1
+	}
+	if h.Xbsi1e { // see CenterMixLevel; held to the range the enhanced one has
+		return gainLevels[clampSurroundGainLevel(h.Lorosurmixlev&7)]
 	}
 	if h.Surmixlev > 2 {
 		return surroundMixLevels[1]

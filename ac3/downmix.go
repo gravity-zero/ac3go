@@ -211,10 +211,16 @@ func (d *Decoder) updateDownmix() {
 	if !d.downmixing() {
 		return
 	}
-	// The three header fields the coefficients are a function of, plus the
-	// output width, in one key. None is wider than three bits.
-	key := uint16(d.h.Acmod)<<8 | uint16(d.h.Cmixlev)<<5 | uint16(d.h.Surmixlev)<<2 |
-		uint16(d.dmixChannels) | 1<<15
+	// The header fields the coefficients are a function of, plus the output
+	// width, in one key: the mode, the two mix levels, and the alternate
+	// syntax's restatement of them, which overrides them when present. None
+	// is wider than three bits.
+	var xbsi1 uint32
+	if d.h.Xbsi1e {
+		xbsi1 = 1<<6 | uint32(d.h.Lorocmixlev&7)<<3 | uint32(d.h.Lorosurmixlev&7)
+	}
+	key := xbsi1<<11 | uint32(d.h.Acmod&7)<<8 | uint32(d.h.Cmixlev&7)<<5 |
+		uint32(d.h.Surmixlev&7)<<2 | uint32(d.dmixChannels) | 1<<31
 	if key == d.dmixFor {
 		return
 	}
