@@ -48,5 +48,23 @@ for (const v of samples) {
 }
 if (peak === 0) fail('decoded silence')
 
+// The downmix goes through a different path in the decoder than the native
+// layout, and it once came out silent for E-AC-3 while the native decode was
+// fine: check both widths are there, the same length, and not silence.
+for (const [downmix, want] of [['stereo', 2], ['mono', 1]]) {
+  const mix = ac3.decode(bytes, { downmix })
+  if (mix.error) fail(`decode ${downmix}: ${mix.error}`)
+  if (mix.channels !== want) fail(`${downmix}: ${mix.channels} channels`)
+  if (mix.frames !== dec.frames) fail(`${downmix}: ${mix.frames} samples/ch, native ${dec.frames}`)
+  const s = new Float32Array(mix.bytes.buffer, mix.bytes.byteOffset, mix.frames * mix.channels)
+  let p = 0
+  for (const v of s) {
+    if (!Number.isFinite(v)) fail(`${downmix}: non-finite sample`)
+    p = Math.max(p, Math.abs(v))
+  }
+  if (p === 0) fail(`${downmix}: decoded silence`)
+  console.log(`  ${downmix}: ${mix.channels} ch, peak ${p.toFixed(4)}`)
+}
+
 console.log(`OK: ${dec.channels} ch, ${dec.sampleRate} Hz, ${dec.frames} samples/ch, peak ${peak.toFixed(4)}`)
 process.exit(0)

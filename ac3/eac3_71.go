@@ -59,6 +59,13 @@ func (d *Decoder) decodeDependent71(full []byte) error {
 	if !is71Extension(&d.h, dh) {
 		return nil
 	}
+	// A downmix folds the core, which is already a complete 5.1 mix of the
+	// programme - it is what a 5.1 decoder plays. The side and back channels
+	// have nowhere to go in it, so the dependent is stepped over undecoded, and
+	// Samples keeps handing back the mix rather than the 7.1 planes.
+	if d.downmixing() {
+		return nil
+	}
 
 	if d.dep == nil {
 		d.dep = NewDecoder()

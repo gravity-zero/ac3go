@@ -2,6 +2,8 @@ package ac3
 
 import (
 	"math"
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/gravity-zero/ac3go/pcm"
@@ -200,5 +202,249 @@ func TestDownmixLeavesStereoAlone(t *testing.T) {
 	d.h.Acmod = AcmodDualMono
 	if !d.downmixing() {
 		t.Error("a dual mono stream asked for stereo is not being mixed")
+	}
+}
+
+// The coefficients below are written out rather than taken from
+// setDownmixCoeffs, so that the decode tests compare the decoder against the
+// spec rather than against itself. Both 5.1 fixtures state a centre at -4.5 dB
+// and surrounds at -6 dB, the encoder's defaults, and the tests check that the
+// headers say so before relying on it.
+var (
+	fixtureCmix = float32(math.Pow(2, -4.5/6))
+	fixtureSmix = float32(0.5)
+)
+
+// wantLoRo mixes one frame of coded 3/2 channels, in coded order L C R Ls Rs,
+// into Lo/Ro by clause 7.8.2 with each output normalized to sum to one.
+func wantLoRo(native [][]float32) (lo, ro []float32) {
+	c, s := fixtureCmix, fixtureSmix
+	norm := 1 + c + s
+	lo = make([]float32, len(native[0]))
+	ro = make([]float32, len(native[0]))
+	for i := range lo {
+		lo[i] = (native[0][i] + c*native[1][i] + s*native[3][i]) / norm
+		ro[i] = (native[2][i] + c*native[1][i] + s*native[4][i]) / norm
+	}
+	return lo, ro
+}
+
+// decodeFrames decodes every access unit of stream, handing each frame's output
+// planes to fn. It fails the test if the stream stops decoding early.
+func decodeFrames(t *testing.T, stream []byte, layout pcm.Layout, fn func(d *Decoder, planes [][]float32)) int {
+	t.Helper()
+	d := NewDecoder()
+	d.SetDither(false) // the noise differs between two decoders; silence does not
+	if err := d.SetDownmix(layout); err != nil {
+		t.Fatal(err)
+	}
+	n := 0
+	for len(stream) > 0 {
+		if err := d.DecodeFrame(stream); err != nil {
+			t.Fatalf("frame %d: %v", n, err)
+		}
+		planes := make([][]float32, d.OutputChannels())
+		for ch := range planes {
+			planes[ch] = append([]float32(nil), d.Samples(ch)...)
+		}
+		fn(d, planes)
+		stream = stream[d.AccessUnitSize():]
+		n++
+	}
+	return n
+}
+
+// TestDownmixDecoded51 decodes a real 5.1 fixture twice, once natively and once
+// mixed down, and holds every mixed sample to the native channels mixed by
+// hand. It runs on the AC-3 and the E-AC-3 syntax alike: the two take
+// different paths through DecodeFrame, and the E-AC-3 one once returned before
+// the mix and handed back silence.
+func TestDownmixDecoded51(t *testing.T) {
+	for _, name := range []string{"tones_48k_5p1_448k.ac3", "tones_48k_5p1_384k.eac3"} {
+		t.Run(name, func(t *testing.T) {
+			stream, err := os.ReadFile(filepath.Join("testdata", name))
+			if err != nil {
+				t.Fatal(err)
+			}
+
+			var native [][][]float32
+			decodeFrames(t, stream, nil, func(d *Decoder, planes [][]float32) {
+				if len(native) == 0 {
+					if d.h.Acmod != Acmod3F2R {
+						t.Fatalf("acmod %d, want 3/2: the fixture is not the 5.1 this test assumes", d.h.Acmod)
+					}
+					if d.h.CenterMixLevel() != fixtureCmix || d.h.SurroundMixLevel() != fixtureSmix {
+						t.Fatalf("mix levels %v/%v, want %v/%v: the fixture is not the one this test assumes",
+							d.h.CenterMixLevel(), d.h.SurroundMixLevel(), fixtureCmix, fixtureSmix)
+					}
+				}
+				native = append(native, planes)
+			})
+
+			check := func(t *testing.T, layout pcm.Layout, want func(lo, ro []float32) [][]float32) {
+				var peak float32
+				frame := 0
+				n := decodeFrames(t, stream, layout, func(d *Decoder, planes [][]float32) {
+					if got := d.OutputLayout(); got.String() != layout.String() {
+						t.Fatalf("OutputLayout = %s, want %s", got, layout)
+					}
+					lo, ro := wantLoRo(native[0])
+					exp := want(lo, ro)
+					for ch := range exp {
+						for i, w := range exp[ch] {
+							g := planes[ch][i]
+							if math.Abs(float64(g-w)) > 1e-6 {
+								t.Fatalf("frame %d, output %d, sample %d: got %v, want %v",
+									frame, ch, i, g, w)
+							}
+							peak = max(peak, float32(math.Abs(float64(g))))
+						}
+					}
+					native = native[1:]
+					frame++
+				})
+				if n == 0 {
+					t.Fatal("no frame decoded")
+				}
+				// An absolute floor, so that two silent outputs cannot agree with
+				// each other: every coded channel of the fixture peaks near
+				// 0.0625, and no mix of them comes out below a quarter of that.
+				if peak < 0.0625/4 {
+					t.Errorf("mixed output peaks at %v: the downmix is (nearly) silent", peak)
+				}
+			}
+
+			all := native
+			t.Run("stereo", func(t *testing.T) {
+				native = all
+				check(t, pcm.LayoutStereo, func(lo, ro []float32) [][]float32 {
+					return [][]float32{lo, ro}
+				})
+			})
+			t.Run("mono", func(t *testing.T) {
+				native = all
+				check(t, pcm.LayoutMono, func(lo, ro []float32) [][]float32 {
+					m := make([]float32, len(lo))
+					for i := range m {
+						m[i] = (lo[i] + ro[i]) * float32(math.Sqrt(0.5))
+					}
+					return [][]float32{m}
+				})
+			})
+		})
+	}
+}
+
+// dependent71Header builds an E-AC-3 dependent substream of size bytes whose
+// header states the standard 7.1 extension, with nothing but zeros after it.
+// The header is all a 7.1 merge needs to recognize one; the audio behind it is
+// never meant to decode.
+func dependent71Header(size int) []byte {
+	var w bitWriter
+	w.write(0x0B77, 16)
+	w.write(uint32(StrmtypDependent), 2)
+	w.write(0, 3)                 // substreamid
+	w.write(uint32(size/2-1), 11) // frmsiz
+	w.write(0, 2)                 // fscod: 48 kHz
+	w.write(3, 2)                 // numblkscod: six blocks
+	w.write(uint32(Acmod2F2R), 3) // four channels
+	w.write(0, 1)                 // lfeon
+	w.write(16, 5)                // bsid
+	w.write(31, 5)                // dialnorm
+	w.write(0, 1)                 // compre
+	w.write(1, 1)                 // chanmape
+	w.write(eac3Chanmap71, 16)    // chanmap
+	for len(w.buf) < size {
+		w.write(0, 8)
+	}
+	return w.buf[:size]
+}
+
+// TestDownmix71MixesTheCore pins what a downmix of a 7.1 access unit is: the
+// 5.1 core mixed down, the dependent substream stepped over. The core is a
+// complete 5.1 mix of the programme - it is what a 5.1 decoder plays - so it is
+// what gets folded, and the dependent is not even decoded: the dependent here
+// is a header followed by zeros, which would fail or come out as garbage if it
+// were.
+func TestDownmix71MixesTheCore(t *testing.T) {
+	for _, name := range []string{"tones_48k_5p1_448k.ac3", "tones_48k_5p1_384k.eac3"} {
+		t.Run(name, func(t *testing.T) {
+			stream, err := os.ReadFile(filepath.Join("testdata", name))
+			if err != nil {
+				t.Fatal(err)
+			}
+			var h Header
+			if err := ParseHeader(stream, &h); err != nil {
+				t.Fatal(err)
+			}
+			core := stream[:h.Sync.FrameSize]
+			dep := dependent71Header(256)
+			var dh Header
+			if err := ParseHeader(dep, &dh); err != nil {
+				t.Fatalf("synthetic dependent header does not parse: %v", err)
+			}
+			if !is71Extension(&h, &dh) {
+				t.Fatal("synthetic dependent is not the standard 7.1 extension")
+			}
+			au := append(append([]byte(nil), core...), dep...)
+
+			for _, layout := range []pcm.Layout{pcm.LayoutStereo, pcm.LayoutMono} {
+				want := NewDecoder()
+				want.SetDither(false)
+				want.SetDownmix(layout)
+				if err := want.DecodeFrame(core); err != nil {
+					t.Fatal(err)
+				}
+
+				d := NewDecoder()
+				d.SetDither(false)
+				d.SetDownmix(layout)
+				if err := d.DecodeFrame(au); err != nil {
+					t.Fatalf("%s: %v", layout, err)
+				}
+				if got := d.AccessUnitSize(); got != len(au) {
+					t.Errorf("%s: AccessUnitSize = %d, want %d: the dependent must still be stepped over",
+						layout, got, len(au))
+				}
+				if got := d.OutputLayout(); got.String() != layout.String() {
+					t.Fatalf("%s: OutputLayout = %s: a downmix of 7.1 must not come out as 7.1", layout, got)
+				}
+				var peak float32
+				for ch := range d.OutputChannels() {
+					g, w := d.Samples(ch), want.Samples(ch)
+					for i := range w {
+						if g[i] != w[i] {
+							t.Fatalf("%s: output %d sample %d: got %v, want the core's mix %v",
+								layout, ch, i, g[i], w[i])
+						}
+						peak = max(peak, float32(math.Abs(float64(g[i]))))
+					}
+				}
+				if peak == 0 {
+					t.Errorf("%s: silent output", layout)
+				}
+			}
+		})
+	}
+}
+
+// TestDownmixFailedFrameIsAnError pins that a frame that cannot be decoded is
+// reported as such with a downmix asked for, on both syntaxes: the mix must
+// not turn a decode failure into a silent success.
+func TestDownmixFailedFrameIsAnError(t *testing.T) {
+	for _, name := range []string{"tones_48k_5p1_448k.ac3", "tones_48k_5p1_384k.eac3"} {
+		stream, err := os.ReadFile(filepath.Join("testdata", name))
+		if err != nil {
+			t.Fatal(err)
+		}
+		var h Header
+		if err := ParseHeader(stream, &h); err != nil {
+			t.Fatal(err)
+		}
+		d := NewDecoder()
+		d.SetDownmix(pcm.LayoutStereo)
+		if err := d.DecodeFrame(stream[:h.Sync.FrameSize-1]); err == nil {
+			t.Errorf("%s: a truncated frame decoded without error under a downmix", name)
+		}
 	}
 }

@@ -362,26 +362,14 @@ func (d *Decoder) DecodeFrame(frame []byte) error {
 				return blockError(blk, err)
 			}
 		}
-		d.blockEndBit = d.r.BitPos()
-		if avail := len(frame)*8 - blockTrailerBits; d.blockEndBit > avail {
-			return frameOverrun(d.blockEndBit, avail)
-		}
-		return d.decodeDependent71(full)
-	}
-
-	for blk := range BlocksPerFrame {
-		if err := d.decodeBlock(blk); err != nil {
-			return blockError(blk, err)
+	} else {
+		for blk := range BlocksPerFrame {
+			if err := d.decodeBlock(blk); err != nil {
+				return blockError(blk, err)
+			}
 		}
 	}
 	d.blockEndBit = d.r.BitPos()
-
-	// The samples are all there now, which is what the downmix needs: it mixes
-	// finished samples rather than coefficients, so it runs once per frame
-	// rather than once per block.
-	if d.downmixing() {
-		d.downmix()
-	}
 
 	// The audio has to leave room for what the frame ends with. This is the
 	// one check that the audio blocks were read from the right bit: they are
@@ -390,9 +378,19 @@ func (d *Decoder) DecodeFrame(frame []byte) error {
 	if avail := len(frame)*8 - blockTrailerBits; d.blockEndBit > avail {
 		return frameOverrun(d.blockEndBit, avail)
 	}
-	// An AC-3 frame can be the 5.1 core of a 7.1 programme, with an enhanced
-	// dependent substream adding the side and back channels. This is the same
-	// merge as for an enhanced core; only the core's own syntax differs.
+
+	// The samples are all there now, which is what the downmix needs: it mixes
+	// finished samples rather than coefficients, so it runs once per frame
+	// rather than once per block. Both syntaxes come through here: the mix
+	// once ran in the AC-3 path only, and an E-AC-3 stream asked for stereo
+	// handed back the planes' zeros.
+	if d.downmixing() {
+		d.downmix()
+	}
+
+	// Either syntax can be the 5.1 core of a 7.1 programme, with an enhanced
+	// dependent substream adding the side and back channels. The merge is the
+	// same; only the core's own syntax differs.
 	return d.decodeDependent71(full)
 }
 
