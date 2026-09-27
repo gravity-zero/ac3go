@@ -219,6 +219,13 @@ type Decoder struct {
 	output71 bool
 	auSize   int
 
+	// What the last access unit did that Stats reports and no error says:
+	// whether it carried the 7.1 extension (merged or folded to its core), and
+	// whether a dependent substream was stepped over. See stats.go.
+	coded71    bool
+	depSkipped bool
+	stats      Stats
+
 	// The filter bank and its state. delay is the tail of the block before,
 	// waiting to be overlapped with the next one, and it is the one thing that
 	// crosses a frame boundary: see Samples.
@@ -318,8 +325,16 @@ func (d *Decoder) BlockEndBit() int { return d.blockEndBit }
 //
 // It does not verify the check words: call CheckCRC for that.
 func (d *Decoder) DecodeFrame(frame []byte) error {
+	f, err := d.decodeFrame(frame)
+	d.count(f)
+	return err
+}
+
+// decodeFrame is DecodeFrame, saying why it failed as well as that it did.
+func (d *Decoder) decodeFrame(frame []byte) (failure, error) {
+	d.output71, d.coded71, d.depSkipped = false, false, false
 	if err := ParseHeader(frame, &d.h); err != nil {
-		return err
+		return headerFailure(err), err
 	}
 	// ParseHeader tolerates a buffer that stops after the header: it parses a
 	// header, not a frame, and the frame reader is what guarantees whole ones.
@@ -328,13 +343,12 @@ func (d *Decoder) DecodeFrame(frame []byte) error {
 	// at FrameSize, and the audio path would read another frame's bytes as this
 	// one's. Callers hand this untrusted media; it must not crash on a short read.
 	if len(frame) < d.h.Sync.FrameSize {
-		return shortFrameError(len(frame), d.h.Sync.FrameSize)
+		return failTruncated, shortFrameError(len(frame), d.h.Sync.FrameSize)
 	}
 	full := frame
 	if len(frame) > d.h.Sync.FrameSize {
 		frame = frame[:d.h.Sync.FrameSize]
 	}
-	d.output71 = false
 	d.auSize = d.h.Sync.FrameSize
 
 	d.reset()
@@ -349,23 +363,23 @@ func (d *Decoder) DecodeFrame(frame []byte) error {
 		// caller handed one has been handed something it cannot use rather than
 		// something it can ignore.
 		if d.h.Sync.Substreamid != 0 {
-			return unsupportedSubstream(d.h.Sync.Substreamid)
+			return failSubstream, unsupportedSubstream(d.h.Sync.Substreamid)
 		}
 		if d.h.Sync.HasFscod2 {
-			return unsupportedReducedRate(d.h.Sync.SampleRate)
+			return failReducedRate, unsupportedReducedRate(d.h.Sync.SampleRate)
 		}
 		if err := d.parseEAC3AudioFrame(&d.r); err != nil {
-			return err
+			return failBlock, err
 		}
 		for blk := range d.h.Sync.NumBlocks {
 			if err := d.decodeEAC3Block(blk); err != nil {
-				return blockError(blk, err)
+				return failBlock, blockError(blk, err)
 			}
 		}
 	} else {
 		for blk := range BlocksPerFrame {
 			if err := d.decodeBlock(blk); err != nil {
-				return blockError(blk, err)
+				return failBlock, blockError(blk, err)
 			}
 		}
 	}
@@ -376,7 +390,7 @@ func (d *Decoder) DecodeFrame(frame []byte) error {
 	// self-delimiting from there on, so a decode that starts one bit out
 	// walks off the end of the frame or lands nowhere near it.
 	if avail := len(frame)*8 - blockTrailerBits; d.blockEndBit > avail {
-		return frameOverrun(d.blockEndBit, avail)
+		return failOverrun, frameOverrun(d.blockEndBit, avail)
 	}
 
 	// The samples are all there now, which is what the downmix needs: it mixes
@@ -391,7 +405,10 @@ func (d *Decoder) DecodeFrame(frame []byte) error {
 	// Either syntax can be the 5.1 core of a 7.1 programme, with an enhanced
 	// dependent substream adding the side and back channels. The merge is the
 	// same; only the core's own syntax differs.
-	return d.decodeDependent71(full)
+	if err := d.decodeDependent71(full); err != nil {
+		return failDependent, err
+	}
+	return failNone, nil
 }
 
 // reset clears the state the blocks of a frame inherit from each other, so

@@ -57,13 +57,16 @@ func (d *Decoder) decodeDependent71(full []byte) error {
 	// does not reach for those channels would.
 	d.auSize = d.h.Sync.FrameSize + dh.Sync.FrameSize
 	if !is71Extension(&d.h, dh) {
+		d.depSkipped = true
 		return nil
 	}
+	d.coded71 = true
 	// A downmix folds the core, which is already a complete 5.1 mix of the
 	// programme - it is what a 5.1 decoder plays. The side and back channels
 	// have nowhere to go in it, so the dependent is stepped over undecoded, and
 	// Samples keeps handing back the mix rather than the 7.1 planes.
 	if d.downmixing() {
+		d.depSkipped = true
 		return nil
 	}
 
@@ -75,6 +78,7 @@ func (d *Decoder) decodeDependent71(full []byte) error {
 		return err
 	}
 	if d.dep.OutputChannels() != 4 {
+		d.coded71, d.depSkipped = false, true
 		return nil // not the four side/back channels we mapped; keep 5.1
 	}
 	d.output71 = true
