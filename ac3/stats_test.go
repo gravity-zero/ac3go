@@ -160,6 +160,50 @@ func TestStatsOverrun(t *testing.T) {
 	}
 }
 
+// TestStatsOverrunAC3 is the AC-3 side of TestStatsOverrun. AC-3 states its
+// size only by frmsizecod, in steps too coarse to land in the trailer from
+// most frames; the one used here was found by trying every code on every frame
+// of the fixtures. At 44.1 kHz the two codes of a rate differ by one word, and
+// this frame's audio ends 13 bits short of the smaller one's end: it fits in
+// the bytes, and leaves no room for the check word.
+func TestStatsOverrunAC3(t *testing.T) {
+	stream := readFixture(t, "tones_44k1_stereo_192k.ac3")
+	const at, code = 8, 20
+	var frame []byte
+	for i := 0; i <= at; i++ {
+		var h Header
+		if err := ParseHeader(stream, &h); err != nil {
+			t.Fatal(err)
+		}
+		frame = stream[:h.Sync.FrameSize]
+		stream = stream[h.Sync.FrameSize:]
+	}
+	probe := NewDecoder()
+	if err := probe.DecodeFrame(frame); err != nil {
+		t.Fatal(err)
+	}
+	var h Header
+	if err := ParseHeader(frame, &h); err != nil {
+		t.Fatal(err)
+	}
+	size := int(frameSizes[code][h.Sync.Fscod]) * 2
+	end := probe.BlockEndBit()
+	if end > size*8 || size*8-end >= blockTrailerBits {
+		t.Fatalf("audio ends at bit %d: a %d byte frame is not an overrun of it", end, size)
+	}
+	short := append([]byte(nil), frame[:size]...)
+	short[4] = short[4]&0xc0 | code
+
+	d := NewDecoder()
+	err := d.DecodeFrame(short)
+	if err == nil {
+		t.Fatal("an overrunning frame decoded")
+	}
+	if got := d.Stats(); !statsEqual(got, Stats{Overruns: 1}) {
+		t.Errorf("Stats = %+v (%v), want Overruns 1 and nothing else", got, err)
+	}
+}
+
 // TestStatsDependent: a 7.1 access unit under a downmix, and a dependent
 // substream that is not the 7.1 extension, are both stepped over; a 7.1 one
 // that is decoded and fails is an error of its own.
