@@ -178,12 +178,11 @@ func decode(_ js.Value, args []js.Value) any {
 	// being accumulated on the Go heap: TinyGo's collectors size the heap at a
 	// large multiple of the per-call allocation churn, so keeping the live set
 	// at one access unit keeps the wasm memory flat no matter the stream length.
+	//
+	// DecodeFrame parses the header itself, so a bad one stops the loop there
+	// and is counted in the stats like any other failure.
 	pos := data
 	for len(pos) > 0 {
-		var h ac3.Header
-		if ac3.ParseHeader(pos, &h) != nil {
-			break
-		}
 		if d.DecodeFrame(pos) != nil {
 			break
 		}
@@ -230,5 +229,25 @@ func decode(_ js.Value, args []js.Value) any {
 	res.Set("layout", layout.String())
 	res.Set("frames", frames)
 	res.Set("bytes", out)
+	res.Set("stats", statsObject(d.Stats()))
 	return res
+}
+
+// statsObject renders the decoder's counters as a plain object, with the
+// field names of ac3.Stats in lower camel case.
+func statsObject(s ac3.Stats) js.Value {
+	o := js.Global().Get("Object").New()
+	o.Set("frames", s.Frames)
+	o.Set("truncated", s.Truncated)
+	o.Set("badHeaders", s.BadHeaders)
+	o.Set("unsupportedSubstreams", s.UnsupportedSubstreams)
+	o.Set("unsupportedReducedRate", s.UnsupportedReducedRate)
+	o.Set("blockErrors", s.BlockErrors)
+	o.Set("overruns", s.Overruns)
+	o.Set("dependentErrors", s.DependentErrors)
+	o.Set("dependentSkipped", s.DependentSkipped)
+	o.Set("layoutChanges", s.LayoutChanges)
+	o.Set("downmixed", s.Downmixed)
+	o.Set("lastLayout", s.LastLayout.String())
+	return o
 }

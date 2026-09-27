@@ -63,6 +63,32 @@ export interface DecodeResult {
   frames: number
   /** Interleaved float32: samples[frame * channels + channel]. */
   samples: Float32Array
+  /** What the decoder did over the stream: see DecodeStats. */
+  stats: DecodeStats
+}
+
+/**
+ * The decoder's counters for one decode() call, as ac3.Stats has them. Decoding
+ * stops at the first frame that fails, so at most one failure is counted.
+ */
+export interface DecodeStats {
+  /** Access units decoded (a 7.1 one counts once). */
+  frames: number
+  truncated: number
+  badHeaders: number
+  unsupportedSubstreams: number
+  unsupportedReducedRate: number
+  blockErrors: number
+  overruns: number
+  dependentErrors: number
+  /** Dependent substreams stepped over, the 7.1 extension under a downmix included. */
+  dependentSkipped: number
+  /** Changes of the coded layout between decoded access units. */
+  layoutChanges: number
+  /** Access units actually mixed down. */
+  downmixed: number
+  /** Layout the stream coded in the last access unit, before any downmix. */
+  lastLayout: string
 }
 
 /** The methods the wasm module exposes, with the input reading done for you. */
@@ -192,6 +218,7 @@ function wrap(raw: RawApi): Ac3GoApi {
         layout: r.layout as string,
         frames: r.frames as number,
         samples,
+        stats: r.stats as unknown as DecodeStats,
       }
     },
   }

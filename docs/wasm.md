@@ -57,7 +57,7 @@ The module registers a global `Ac3Go` object:
 |---|---|
 | `Ac3Go.version()` | build version string |
 | `Ac3Go.probe(bytes)` | the first frame's header - `{ format, sampleRate, channels, layout, mode, lfe, bitRate, blocks, dialnorm, bsid }` |
-| `Ac3Go.decode(bytes, opts?)` | the whole stream as PCM - `{ sampleRate, channels, layout, frames, bytes }` |
+| `Ac3Go.decode(bytes, opts?)` | the whole stream as PCM - `{ sampleRate, channels, layout, frames, bytes, stats }` |
 
 `bytes` is a `Uint8Array` holding either a raw elementary AC-3/E-AC-3 stream
 **or** a CMAF (fragmented-MP4) audio segment - the two are told apart by their
@@ -66,7 +66,11 @@ first bytes, so a page can hand over whatever its HLS/DASH player already has
 without unwrapping it first. `decode` returns `bytes` as interleaved
 little-endian float32 (`samples[frame * channels + channel]`); wrap it as `new
 Float32Array(res.bytes.buffer, res.bytes.byteOffset, res.frames *
-res.channels)`. On failure a method returns `{ error: "..." }` instead of a
+res.channels)`. `stats` is the decoder's `ac3.Stats` for the call, field names
+in lower camel case: access units decoded, the one failure that stopped the
+decode by cause (`truncated`, `badHeaders`, `blockErrors`, ...), dependent
+substreams stepped over, layout changes, frames mixed down, and the last
+coded layout. On failure a method returns `{ error: "..." }` instead of a
 result - the TypeScript wrapper below turns that into a thrown `Error`.
 
 > ac3go does not fetch segments or parse an m3u8/MPD manifest - that is the

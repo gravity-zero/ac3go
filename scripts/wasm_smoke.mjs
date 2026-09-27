@@ -66,5 +66,26 @@ for (const [downmix, want] of [['stereo', 2], ['mono', 1]]) {
   console.log(`  ${downmix}: ${mix.channels} ch, peak ${p.toFixed(4)}`)
 }
 
+// Stats: the decoder's counters come back with the samples. A whole stream
+// decodes with no failure of any kind; a stream cut short by one byte stops
+// on its last frame, counted as truncated and as nothing else.
+const errorKeys = ['truncated', 'badHeaders', 'unsupportedSubstreams', 'unsupportedReducedRate',
+  'blockErrors', 'overruns', 'dependentErrors']
+const st = dec.stats
+if (!st || typeof st.frames !== 'number') fail('decode result carries no stats')
+if (st.frames < 1) fail('stats.frames = ' + st.frames)
+for (const k of errorKeys) if (st[k] !== 0) fail(`stats.${k} = ${st[k]} on a whole stream`)
+if (st.lastLayout !== probe.layout) fail(`stats.lastLayout ${st.lastLayout}, probe ${probe.layout}`)
+const mixed = ac3.decode(bytes, { downmix: 'mono' })
+if (mixed.stats.downmixed !== mixed.stats.frames) fail(`mono: downmixed ${mixed.stats.downmixed} of ${mixed.stats.frames}`)
+const cut = ac3.decode(bytes.subarray(0, bytes.length - 1))
+if (cut.error) fail('cut stream: ' + cut.error)
+for (const k of errorKeys) {
+  const want = k === 'truncated' ? 1 : 0
+  if (cut.stats[k] !== want) fail(`cut stream: stats.${k} = ${cut.stats[k]}, want ${want}`)
+}
+if (cut.stats.frames !== st.frames - 1) fail(`cut stream: ${cut.stats.frames} frames, want ${st.frames - 1}`)
+console.log(`  stats: ${JSON.stringify(st)}`)
+
 console.log(`OK: ${dec.channels} ch, ${dec.sampleRate} Hz, ${dec.frames} samples/ch, peak ${peak.toFixed(4)}`)
 process.exit(0)
