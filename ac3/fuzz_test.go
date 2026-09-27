@@ -152,12 +152,16 @@ func FuzzParseHeader(f *testing.F) {
 		// asks for the centre to be dropped from the downmix entirely - zero is
 		// a level there, not an absence. An AC-3 frame indexes tables 4.16 and
 		// 4.17, which name attenuations only, so a gain above unity or a zero
-		// would be a table slip.
+		// would be a table slip - unless the frame is in the alternate syntax
+		// and restates its Lo/Ro levels in xbsi1, whose three bit fields index
+		// the enhanced syntax's table and so reach it all, boost and zero
+		// included.
+		gainTable := isEAC3(h.Sync.Bsid) || h.Xbsi1e
 		maxLevel := float32(1)
-		if isEAC3(h.Sync.Bsid) {
+		if gainTable {
 			maxLevel = levelPlus3dB
 		}
-		if lv := h.CenterMixLevel(); lv < 0 || lv > maxLevel || (lv == 0 && !isEAC3(h.Sync.Bsid)) {
+		if lv := h.CenterMixLevel(); lv < 0 || lv > maxLevel || (lv == 0 && !gainTable) {
 			t.Fatalf("CenterMixLevel = %v", lv)
 		}
 		// The surround level is the exception: the spec gives the field only the
