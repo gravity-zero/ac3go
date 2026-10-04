@@ -112,7 +112,12 @@ func list(in io.Reader, out *bufio.Writer, limit int, summaryOnly, verbose, chec
 		// overstate the duration of a short-frame stream by up to six times,
 		// and understate the bit rate by as much - which reads as a plausible
 		// number rather than as a mistake.
-		st.samples += int64(h.Sync.NumBlocks * ac3.SamplesPerBlock)
+		//
+		// And not every frame: a dependent substream covers the span of the
+		// frame it extends, so counting it would double the duration.
+		if h.Sync.AdvancesTime() {
+			st.samples += int64(h.Sync.Samples())
+		}
 		shape := describe(h)
 		if _, seen := st.shapes[shape]; !seen {
 			st.order = append(st.order, shape)

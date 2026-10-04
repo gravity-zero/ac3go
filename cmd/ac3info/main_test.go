@@ -195,6 +195,12 @@ func TestListEmptyStream(t *testing.T) {
 // headers - and the check words are absent, which is why the tests that use
 // this pass checkCRC false.
 func eac3ShortFrame(nblkscod uint32, sizeBytes int) []byte {
+	return eac3Frame(uint32(ac3.StrmtypIndependent), nblkscod, sizeBytes)
+}
+
+// eac3Frame is eac3ShortFrame with the frame type left to the caller, so that
+// a dependent substream can be written too.
+func eac3Frame(strmtyp, nblkscod uint32, sizeBytes int) []byte {
 	var buf []byte
 	var acc uint64
 	var nacc uint
@@ -207,7 +213,7 @@ func eac3ShortFrame(nblkscod uint32, sizeBytes int) []byte {
 		}
 	}
 	write(0x0B77, 16)                // syncword
-	write(0, 2)                      // strmtyp: independent
+	write(strmtyp, 2)                // strmtyp
 	write(0, 3)                      // substreamid
 	write(uint32(sizeBytes/2-1), 11) // frmsiz, in words from zero
 	write(0, 2)                      // fscod: 48 kHz
@@ -217,10 +223,15 @@ func eac3ShortFrame(nblkscod uint32, sizeBytes int) []byte {
 	write(16, 5)                     // bsid
 	write(31, 5)                     // dialnorm
 	write(0, 1)                      // compre
-	write(0, 1)                      // mixmdate
-	write(0, 1)                      // infomdate
-	write(0, 1)                      // convsync (fewer than six blocks)
-	write(0, 1)                      // addbsie
+	if strmtyp == uint32(ac3.StrmtypDependent) {
+		write(0, 1) // chanmape
+	}
+	write(0, 1) // mixmdate
+	write(0, 1) // infomdate
+	if strmtyp == uint32(ac3.StrmtypIndependent) && nblkscod != 3 {
+		write(0, 1) // convsync (fewer than six blocks)
+	}
+	write(0, 1) // addbsie
 	for nacc > 0 {
 		write(0, 1)
 	}
@@ -267,6 +278,28 @@ func TestListShortFrames(t *testing.T) {
 			if !strings.Contains(got, want) {
 				t.Errorf("nblkscod %d: summary has no %q:\n%s", c.nblkscod, want, got)
 			}
+		}
+	}
+}
+
+// TestListDependentSubstream pins the duration of a stream that reaches past
+// 5.1: each independent frame is followed by a dependent one covering the same
+// 1536 samples, and counting both would double the duration and halve the bit
+// rate - again as plausible numbers.
+func TestListDependentSubstream(t *testing.T) {
+	var stream []byte
+	for range 4 {
+		stream = append(stream, eac3Frame(uint32(ac3.StrmtypIndependent), 3, 128)...)
+		stream = append(stream, eac3Frame(uint32(ac3.StrmtypDependent), 3, 64)...)
+	}
+	got := runList(t, stream, 0, true, false, false)
+	for _, want := range []string{
+		"frames     8",
+		"duration   0.128 s", // 4 x 1536 samples at 48 kHz
+		"bitrate    48.0 kbit/s",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("summary has no %q:\n%s", want, got)
 		}
 	}
 }
