@@ -140,7 +140,7 @@ jobs:
           }
           set -eo pipefail
           fuzz bitstream FuzzReader
-          for t in FuzzParseSyncInfo FuzzParseHeader FuzzCheckCRC FuzzFrameReader FuzzDecodeFrame; do
+          for t in FuzzParseSyncInfo FuzzParseHeader FuzzCheckCRC FuzzFrameReader FuzzNextAccessUnit FuzzDecodeFrame; do
             fuzz ac3 "$t"
           done
       - name: Keep any crasher

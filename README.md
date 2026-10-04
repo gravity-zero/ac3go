@@ -16,8 +16,8 @@ WebAssembly module that decodes in the browser.
 - **Decode AC-3 and E-AC-3 to PCM** - the full pipeline: exponents, parametric
   bit allocation, mantissas, coupling, rematrixing, the 512/256-point IMDCT with
   KBD windowing and overlap-add, and for E-AC-3 the adaptive hybrid transform
-  (AHT/GAQ) and spectral extension (SPX). Output is float sample planes, 1536
-  per frame.
+  (AHT/GAQ) and spectral extension (SPX). Output is float sample planes, 256
+  per audio block: 1536 for a frame of six.
 - **Sample-accurate** - verified frame by frame against an external reference
   decoder on real 5.1 DDP and stereo streams. Where the format is inherently
   non-reproducible (the noise that fills unallocated bins, and the extension's
@@ -116,21 +116,29 @@ fr := ac3.NewFrameReader(file) // reads syncframes, resyncs, verifies CRCs
 d := ac3.NewDecoder()          // reuse across the stream; allocates nothing per frame
 
 for {
-	frame, err := fr.Next()
+	// A frame and whatever extends it: the dependent substream of a 7.1
+	// programme has to arrive with its 5.1 core to be merged into it.
+	unit, err := fr.NextAccessUnit()
 	if errors.Is(err, io.EOF) {
 		break
 	} else if err != nil {
 		return err
 	}
-	if err := d.DecodeFrame(frame); err != nil {
+	if err := d.DecodeFrame(unit); err != nil {
 		return err
 	}
 	for ch := 0; ch < d.OutputChannels(); ch++ {
-		samples := d.Samples(ch) // []float32, 1536 samples in d.OutputLayout() order
+		// []float32 in d.OutputLayout() order: 1536 samples, or fewer for
+		// an E-AC-3 frame of fewer than six blocks.
+		samples := d.Samples(ch)
 		_ = samples
 	}
 }
 ```
+
+`fr.Next()` returns one syncframe at a time instead, for listing or indexing a
+stream; a decoder fed that way plays the 5.1 core of a 7.1 programme and is
+handed its dependent substreams as frames of their own.
 
 **Downmix and loudness** (both off by default - the decoder reproduces the
 stream's own channels and level unless asked otherwise):

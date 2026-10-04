@@ -193,6 +193,77 @@ func (fr *FrameReader) Next() ([]byte, error) {
 	}
 }
 
+// maxAccessUnitFrames bounds how many syncframes NextAccessUnit gathers. The
+// format allows eight independent substreams with eight dependent ones each,
+// and a stream that goes on past that is not describing one moment of sound.
+const maxAccessUnitFrames = 8 * (1 + 8)
+
+// NextAccessUnit returns the next frame of the programme together with every
+// frame that extends it: the dependent substreams that take it past 5.1, and
+// any other programme the stream carries alongside. They cover the same span
+// of time and arrive as one slice, which is what Decoder.DecodeFrame needs in
+// view to merge a 7.1 extension and what AccessUnitSize will report it spanned.
+// On a stream of one substream - every AC-3 stream, most enhanced ones - it
+// returns exactly what Next does.
+//
+// Header is the programme frame's. Frames that extend nothing, which is how a
+// stream cut in the middle of a unit begins, are dropped and counted by
+// Skipped. The slice is valid until the next call, and the stream ends the way
+// it does under Next.
+func (fr *FrameReader) NextAccessUnit() ([]byte, error) {
+	for {
+		frame, err := fr.Next()
+		if err != nil {
+			return nil, err
+		}
+		if fr.hdr.Sync.AdvancesTime() {
+			break
+		}
+		fr.skipped += int64(len(frame))
+	}
+
+	// The unit is buf[fr.start-size : fr.start] and grows forward. Next is not
+	// used past this point: it is free to move the buffer, and the frames
+	// already gathered would not move with it.
+	size := len(fr.frame)
+	var si SyncInfo
+	for n := 1; n < maxAccessUnitFrames; {
+		avail := fr.buf[fr.start:fr.end]
+		short := len(avail) < EAC3SyncInfoSize
+		if !short {
+			// Syncinfo first, so that the frame of the next unit - which is
+			// what nearly always follows - is not weighed here and again by
+			// Next.
+			if ParseSyncInfo(avail, &si) != nil || si.AdvancesTime() {
+				break
+			}
+			short = len(avail) < si.FrameSize
+		}
+		if short {
+			if fr.eof {
+				break
+			}
+			// Make room and read on, keeping the unit: compact moves what is
+			// unread to the front, so the unit is made unread for the move.
+			fr.start -= size
+			fr.compact()
+			fr.start = size
+			fr.readMore()
+			continue
+		}
+		frameSize, err := fr.tryFrameAt(avail)
+		if err != nil {
+			break // damaged: Next will resync past it
+		}
+		fr.start += frameSize
+		fr.frames++
+		size += frameSize
+		n++
+	}
+	fr.frame = fr.buf[fr.start-size : fr.start]
+	return fr.frame, nil
+}
+
 // tryFrameAt reports the size of the frame starting at b, or an error saying
 // why b does not start one.
 //
