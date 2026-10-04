@@ -120,3 +120,27 @@ func (d *Decoder) samples71(ch int) []float32 {
 	}
 	return d.pcm[0][:]
 }
+
+// spanSubstreams extends auSize over every substream after the frame that does
+// not move the time line: dependent substreams past the one the merge took,
+// and other programmes with theirs. None of them is decoded. They cover the
+// span the frame just decoded covers, and a caller advancing by auSize has to
+// land past them: the next thing it hands over would otherwise be a substream
+// this decoder refuses, and a stream of them would end at its first frame.
+func (d *Decoder) spanSubstreams(full []byte) {
+	if d.h.Sync.Substreamid != 0 || d.h.Sync.Strmtyp == StrmtypDependent {
+		return // not a programme frame: nothing is attached to it
+	}
+	var si SyncInfo
+	// The length check comes first for the reason it does in decodeDependent71:
+	// the common buffer ends with the frame, and parsing nothing builds an error.
+	for rest := full[d.auSize:]; len(rest) >= EAC3SyncInfoSize; rest = full[d.auSize:] {
+		if ParseSyncInfo(rest, &si) != nil || si.AdvancesTime() || len(rest) < si.FrameSize {
+			return
+		}
+		if si.Strmtyp == StrmtypDependent {
+			d.depSkipped = true
+		}
+		d.auSize += si.FrameSize
+	}
+}

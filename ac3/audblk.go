@@ -219,6 +219,10 @@ type Decoder struct {
 	output71 bool
 	auSize   int
 
+	// nsamp is how many samples per channel the frame last decoded holds. The
+	// planes are six blocks long and an enhanced frame may fill fewer.
+	nsamp int
+
 	// What the last access unit did that Stats reports and no error says:
 	// whether it carried the 7.1 extension (merged or folded to its core), and
 	// whether a dependent substream was stepped over. See stats.go.
@@ -245,6 +249,7 @@ func NewDecoder() *Decoder {
 		short: newIMDCT(shortMants),
 	}
 	d.mant.dither = true
+	d.nsamp = SamplesPerFrame
 	return d
 }
 
@@ -269,8 +274,10 @@ func (d *Decoder) Reset() {
 }
 
 // Samples returns the finished PCM of channel ch of the frame last decoded:
-// BlocksPerFrame*256 = 1536 samples, one frame's worth, in the order
-// Header.Layout gives. It stays valid until the next call to DecodeFrame.
+// 256 samples for each of its blocks, in the order Header.Layout gives. That
+// is 1536 for every AC-3 frame and for nearly every enhanced one, and 256, 512
+// or 768 for an enhanced frame of fewer than six blocks - Header says which.
+// It stays valid until the next call to DecodeFrame.
 //
 // Unlike the coefficients, these depend on the frame before this one. The
 // transform overlaps its blocks by half a block, so a frame's first samples
@@ -283,18 +290,20 @@ func (d *Decoder) Reset() {
 // OutputLayout rather than the layout the stream codes.
 func (d *Decoder) Samples(ch int) []float32 {
 	if d.output71 {
-		return d.samples71(ch)
+		return d.samples71(ch)[:d.nsamp]
 	}
 	if d.downmixing() {
-		return d.dmix[ch][:]
+		return d.dmix[ch][:d.nsamp]
 	}
-	return d.pcm[ch][:]
+	return d.pcm[ch][:d.nsamp]
 }
 
 // AccessUnitSize is how many bytes the last decoded frame spanned. It is the
-// syncframe size for an ordinary frame, and the independent plus the dependent
-// substream together for a 7.1 access unit, so a caller advancing by it lands
-// on the next frame rather than in the middle of a dependent substream.
+// syncframe size for an ordinary frame, and the frame plus every substream
+// that follows it without moving the time line - the dependent substream of a
+// 7.1 access unit, further dependents, other programmes - when the buffer held
+// them, so a caller advancing by it lands on the next frame of the programme
+// rather than on a substream the decoder would refuse.
 func (d *Decoder) AccessUnitSize() int { return d.auSize }
 
 // SetDither turns the noise that fills unallocated mantissas on or off. It is
@@ -320,8 +329,11 @@ func (d *Decoder) Block(i int) *Block { return &d.blocks[i] }
 // this is the point where the audio ends and the encoder's slack begins.
 func (d *Decoder) BlockEndBit() int { return d.blockEndBit }
 
-// DecodeFrame decodes the six audio blocks of one syncframe into transform
-// coefficients. frame must hold a whole syncframe; extra bytes are ignored.
+// DecodeFrame decodes the audio blocks of one syncframe. frame must hold a
+// whole syncframe. What follows it is looked at only for the substreams that
+// belong to the same access unit - see AccessUnitSize - and a dependent
+// substream extending the frame to 7.1 has to be there to be merged: hand over
+// what FrameReader.NextAccessUnit returns, or the rest of the stream.
 //
 // It does not verify the check words: call CheckCRC for that.
 func (d *Decoder) DecodeFrame(frame []byte) error {
@@ -350,6 +362,7 @@ func (d *Decoder) decodeFrame(frame []byte) (failure, error) {
 		frame = frame[:d.h.Sync.FrameSize]
 	}
 	d.auSize = d.h.Sync.FrameSize
+	d.nsamp = d.h.Sync.Samples()
 
 	d.reset()
 	d.updateLevelGains()
@@ -408,6 +421,7 @@ func (d *Decoder) decodeFrame(frame []byte) (failure, error) {
 	if err := d.decodeDependent71(full); err != nil {
 		return failDependent, err
 	}
+	d.spanSubstreams(full)
 	return failNone, nil
 }
 
