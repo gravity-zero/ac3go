@@ -114,19 +114,34 @@ jobs:
           key: fuzz-corpus-${{ github.run_id }}
           restore-keys: fuzz-corpus-
       - name: Fuzz each target
+        # The toolchain has a race of its own at the end of -fuzztime: the
+        # coordinator can wake on the deadline before the cancellation has
+        # reached the workers' context, and then reports the deadline itself
+        # as a failure - "context deadline exceeded", no failing input, after
+        # a full slice of clean fuzzing. That one outcome is let through, by
+        # its exact signature. Anything that wrote a failing input still fails.
+        shell: bash
         env:
           CGO_ENABLED: "0"
         run: |
-          set -e
-          for t in FuzzReader; do
-            echo "::group::bitstream $t"
-            go test -run '^$' -fuzz "^${t}\$" -fuzztime=60s ./bitstream
+          fuzz() {
+            echo "::group::$1 $2"
+            local status=0
+            go test -run '^$' -fuzz "^$2\$" -fuzztime=60s "./$1" 2>&1 | tee fuzz.log || status=$?
             echo "::endgroup::"
-          done
+            if [ "$status" -eq 0 ]; then
+              return 0
+            fi
+            if grep -q 'context deadline exceeded' fuzz.log && ! grep -q 'Failing input written' fuzz.log; then
+              echo "::warning::$1 $2: the fuzz deadline was reported as a failure, no failing input - let through"
+              return 0
+            fi
+            return "$status"
+          }
+          set -eo pipefail
+          fuzz bitstream FuzzReader
           for t in FuzzParseSyncInfo FuzzParseHeader FuzzCheckCRC FuzzFrameReader FuzzDecodeFrame; do
-            echo "::group::ac3 $t"
-            go test -run '^$' -fuzz "^${t}\$" -fuzztime=60s ./ac3
-            echo "::endgroup::"
+            fuzz ac3 "$t"
           done
       - name: Keep any crasher
         if: failure()
