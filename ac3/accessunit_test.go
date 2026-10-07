@@ -179,6 +179,35 @@ func TestDecodeFrameStopsAtATruncatedSubstream(t *testing.T) {
 	}
 }
 
+// TestDecodeFrameStopsAtATruncatedDependent is the same cut on the dependent
+// substream that extends the core, substream 0, which decodeDependent71 takes
+// before spanSubstreams gets to look. Its header fits in the seven bytes left
+// and states a frame that is not there; the decoder once added that stated
+// size to the access unit and then sliced at it, past the buffer. Found by
+// FuzzDecodeFrame on an AC-3 core; the input it minimised is kept as a seed.
+func TestDecodeFrameStopsAtATruncatedDependent(t *testing.T) {
+	for _, name := range []string{"tones_48k_5p1_384k.eac3", "tones_48k_5p1_448k.ac3"} {
+		core := fixtureFrames(t, name)[0]
+		dep := eac3EmptyFrame(depSub, 0, 3, 64)
+		// Every cut that still holds a parsable dependent header.
+		for n := EAC3SyncInfoSize; n < len(dep); n++ {
+			buf := append(append([]byte{}, core...), dep[:n]...)
+			d := NewDecoder()
+			if err := d.DecodeFrame(buf); err != nil {
+				t.Fatalf("%s, dependent cut at %d: %v", name, n, err)
+			}
+			if got := d.AccessUnitSize(); got != len(core) {
+				t.Errorf("%s, dependent cut at %d: AccessUnitSize = %d, want the core's %d",
+					name, n, got, len(core))
+			}
+			if d.OutputChannels() != 6 || d.Stats().DependentSkipped != 0 {
+				t.Errorf("%s, dependent cut at %d: %d channels, %d dependents skipped, want 6 and 0",
+					name, n, d.OutputChannels(), d.Stats().DependentSkipped)
+			}
+		}
+	}
+}
+
 // TestNextAccessUnit holds the reader to handing over a programme frame with
 // everything that extends it, so that the decoder has it all in view. The
 // source is read a few bytes at a time: the unit has to survive the buffer

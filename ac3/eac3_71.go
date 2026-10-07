@@ -51,6 +51,16 @@ func (d *Decoder) decodeDependent71(full []byte) error {
 	if !isEAC3(dh.Sync.Bsid) || dh.Sync.Strmtyp != StrmtypDependent || dh.Sync.Substreamid != 0 {
 		return nil
 	}
+	// A dependent header fits in seven bytes and states a frame far longer
+	// than that, so a buffer that ends inside the dependent parses fine here
+	// and holds no dependent at all. It belongs to no access unit, the way a
+	// truncated substream further on belongs to none in spanSubstreams: the
+	// core stands alone and the caller advances past the core only. Deciding
+	// that before auSize moves is what keeps auSize inside the buffer that
+	// spanSubstreams slices at.
+	if len(rest) < dh.Sync.FrameSize {
+		return nil
+	}
 
 	// Only the standard 7.1 extension is merged; anything else advances past
 	// the dependent substream but keeps the 5.1 core, the way a decoder that
